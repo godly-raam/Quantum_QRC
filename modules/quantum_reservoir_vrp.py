@@ -283,18 +283,41 @@ class QuantumReservoir:
         - Variance of observables
         
         This captures both instantaneous and temporal information.
+        
+        CRITICAL: Always returns FIXED-SIZE feature vector!
         """
         current_obs = self.measure_observables()
         
-        if len(self.state_history) > 1:
-            # Time-averaged observables
-            historical_obs = [self.measure_observables(s) for s in self.state_history[-5:]]
+        # FIXED SIZE: Always use the same number of historical states
+        HISTORY_WINDOW = 5
+        
+        if len(self.state_history) >= HISTORY_WINDOW:
+            # Use last 5 states
+            historical_obs = [self.measure_observables(s) for s in self.state_history[-HISTORY_WINDOW:]]
             mean_obs = np.mean(historical_obs, axis=0)
             std_obs = np.std(historical_obs, axis=0)
             
             features = np.concatenate([current_obs, mean_obs, std_obs])
+        
+        elif len(self.state_history) > 0:
+            # Pad with zeros if not enough history
+            historical_obs = [self.measure_observables(s) for s in self.state_history]
+            
+            # Pad to HISTORY_WINDOW states
+            while len(historical_obs) < HISTORY_WINDOW:
+                historical_obs.append(np.zeros_like(current_obs))
+            
+            mean_obs = np.mean(historical_obs, axis=0)
+            std_obs = np.std(historical_obs, axis=0)
+            
+            features = np.concatenate([current_obs, mean_obs, std_obs])
+        
         else:
-            features = current_obs
+            # No history yet - pad with zeros
+            mean_obs = np.zeros_like(current_obs)
+            std_obs = np.zeros_like(current_obs)
+            
+            features = np.concatenate([current_obs, mean_obs, std_obs])
         
         return features
 
@@ -338,38 +361,56 @@ class ReservoirVRPSolver:
         if len(training_instances) == 0:
             raise ValueError("Need training data!")
         
-        # Extract problem dimensions
-        first_instance = training_instances[0]
-        self.n_locations = first_instance['distance_matrix'].shape[0]
-        self.n_vehicles = len(first_instance['optimal_routes'])
+        # Extract problem dimensions from LARGEST instance
+        max_locations = max(inst['distance_matrix'].shape[0] for inst in training_instances)
+        max_vehicles = max(len(inst['optimal_routes']) for inst in training_instances)
+        
+        self.n_locations = max_locations
+        self.n_vehicles = max_vehicles
+        
+        logger.info(f"  Max dimensions: {max_locations} locations, {max_vehicles} vehicles")
         
         # Collect reservoir responses
         X_train = []
         y_train = []
         
-        for instance in training_instances:
+        for idx, instance in enumerate(training_instances):
+            # CRITICAL FIX: Reset reservoir state for each training instance
+            # This ensures consistent feature extraction
+            self.reservoir.current_state = self.reservoir._initialize_state()
+            self.reservoir.state_history = []
+            
             # Encode traffic into reservoir
             traffic_embedding = self.reservoir.encode_traffic_state(
                 instance['distance_matrix'],
                 instance['traffic_multipliers']
             )
             
-            # Evolve reservoir
-            self.reservoir.evolve_with_input(traffic_embedding, evolution_time=0.1)
+            # Evolve reservoir multiple times to build history
+            for _ in range(5):  # Build up history window
+                self.reservoir.evolve_with_input(traffic_embedding, evolution_time=0.1)
             
-            # Extract features
+            # Extract features (now guaranteed to be fixed size)
             features = self.reservoir.get_reservoir_features()
             X_train.append(features)
             
-            # Target: flattened route encoding
-            route_encoding = self._encode_routes(instance['optimal_routes'])
+            # Target: flattened route encoding (padded to max dimensions)
+            route_encoding = self._encode_routes_padded(
+                instance['optimal_routes'],
+                instance['distance_matrix'].shape[0]
+            )
             y_train.append(route_encoding)
+            
+            # Debug first few instances
+            if idx < 3:
+                logger.info(f"  Instance {idx}: features shape = {features.shape}, encoding shape = {route_encoding.shape}")
         
+        # Convert to numpy arrays
         X_train = np.array(X_train)
         y_train = np.array(y_train)
         
-        logger.info(f"  Feature dimension: {X_train.shape[1]}")
-        logger.info(f"  Output dimension: {y_train.shape[1]}")
+        logger.info(f"  Feature dimension: {X_train.shape}")
+        logger.info(f"  Output dimension: {y_train.shape}")
         
         # Train linear readout (ridge regression)
         from sklearn.linear_model import Ridge
@@ -381,18 +422,28 @@ class ReservoirVRPSolver:
         
         self.trained = True
         logger.info(f"✓ Training complete! R² score: {train_score:.3f}")
-    
-    def _encode_routes(self, routes: List[List[int]]) -> np.ndarray:
-        """Encode routes as flat vector for training."""
-        # Simple encoding: binary matrix (vehicle x location)
+        
+    def _encode_routes_padded(self, routes: List[List[int]], current_n_locations: int) -> np.ndarray:
+        """
+        Encode routes as flat vector with padding to max dimensions.
+        
+        This ensures all training instances produce the same output dimension.
+        """
+        # Create encoding matrix with MAX dimensions (not current)
         encoding = np.zeros((self.n_vehicles, self.n_locations))
         
         for v_idx, route in enumerate(routes):
+            if v_idx >= self.n_vehicles:
+                break  # Skip extra vehicles beyond max
             for loc in route:
-                if loc < self.n_locations:
+                if 0 < loc < self.n_locations:  # Skip depot (0) and out-of-bounds
                     encoding[v_idx, loc] = 1.0
         
         return encoding.flatten()
+
+    def _encode_routes(self, routes: List[List[int]]) -> np.ndarray:
+        """Encode routes as flat vector for training (legacy method)."""
+        return self._encode_routes_padded(routes, self.n_locations)
     
     def _decode_routes(self, encoding: np.ndarray) -> List[List[int]]:
         """Decode flat vector back to routes."""
@@ -404,10 +455,18 @@ class ReservoirVRPSolver:
             
             # Assign locations with highest probability to this vehicle
             assigned = np.where(matrix[v_idx] > 0.5)[0]
-            route.extend(sorted(assigned))
+            if len(assigned) > 0:
+                route.extend(sorted(assigned))
             
             route.append(0)  # Return to depot
-            routes.append(route)
+            
+            # Only add route if it visits at least one location
+            if len(route) > 2:
+                routes.append(route)
+        
+        # Ensure at least one route exists
+        if not routes:
+            routes = [[0, 1, 0]]
         
         return routes
     
