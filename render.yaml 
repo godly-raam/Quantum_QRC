@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: qfleet-qrc-backend
+    runtime: docker
+    plan: free
+    region: singapore  # Choose closest to you
+    branch: main
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: QRC_NUM_QUBITS
+        value: 8
+      - key: QRC_TRAINING_INSTANCES
+        value: 15
+      - key: QRC_AUTO_TRAIN
+        value: true
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PORT
+        value: 8000
+    healthCheckPath: /api/health
+    numInstances: 1
+    buildFilter:
+      paths:
+        - main.py
+        - modules/**
+        - requirements.txt
+        - Dockerfile
+        - config.py
