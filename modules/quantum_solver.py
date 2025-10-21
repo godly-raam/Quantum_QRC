@@ -1,4 +1,4 @@
-# modules/quantum_solver.py - PRODUCTION-READY FINAL VERSION
+# modules/quantum_solver.py - FIXED VERSION
 
 from qiskit_aer.primitives import Sampler
 from qiskit_aer import AerSimulator
@@ -70,21 +70,7 @@ def solve_quantum_vrp(
     """
     Adaptive quantum-classical VRP solver.
     
-    Automatically selects optimal simulation strategy based on problem complexity:
-    - Small problems (≤12 qubits): Exact statevector simulation
-    - Medium problems (13-18 qubits): Shot-based sampling
-    - Large problems (>18 qubits): Tensor network approximation
-    
-    Always includes classical fallback for guaranteed solution delivery.
-    
-    Args:
-        distance_matrix: NxN matrix of distances between locations
-        num_vehicles: Number of vehicles in the fleet
-        depot_node: Starting/ending node index (default: 0)
-        reps: QAOA circuit depth (default: 5, will be adjusted based on problem size)
-    
-    Returns:
-        Tuple of (routes, distances, metrics)
+    FIXED: Qiskit Sampler API compatibility
     """
     start_time = time.time()
     
@@ -104,18 +90,15 @@ def solve_quantum_vrp(
         qp = vrp_problem.to_quadratic_program()
         
         # ============================================
-        # ADAPTIVE METHOD SELECTION
+        # ADAPTIVE METHOD SELECTION - FIXED SAMPLER API
         # ============================================
         
         if estimated_qubits <= 12:
             # SMALL PROBLEMS: Exact statevector simulation
             logger.info("Strategy: EXACT statevector simulation (best accuracy)")
-            backend = AerSimulator(
-                method='statevector',
-                device='CPU',
-                max_memory_mb=2048  # Safety cap
-            )
-            sampler = Sampler(backend=backend)
+            
+            # FIX: Use run_options instead of constructor parameters
+            sampler = Sampler(run_options={"shots": None, "seed": 42})
             optimizer = COBYLA(maxiter=150)
             adjusted_reps = min(reps, 5)
             method_note = "exact statevector"
@@ -123,30 +106,22 @@ def solve_quantum_vrp(
         elif estimated_qubits <= 18:
             # MEDIUM PROBLEMS: Shot-based sampling
             logger.info("Strategy: SHOT-BASED sampling (balanced accuracy/memory)")
-            backend = AerSimulator(
-                method='statevector',
-                max_parallel_threads=1,
-                max_memory_mb=4096
-            )
-            sampler = Sampler(backend=backend)
-            sampler.set_options(shots=2048)
+            
+            # FIX: Use run_options
+            sampler = Sampler(run_options={"shots": 2048, "seed": 42})
             optimizer = COBYLA(maxiter=100)
             adjusted_reps = min(reps, 4)
             method_note = "sampling (2048 shots)"
             
         else:
-            # LARGE PROBLEMS: Tensor network approximation
-            logger.warning("Strategy: Tensor network approximation (memory-constrained)")
-            backend = AerSimulator(
-                method='matrix_product_state',
-                matrix_product_state_max_bond_dimension=128,
-                max_parallel_threads=1
-            )
-            sampler = Sampler(backend=backend)
-            sampler.set_options(shots=1024)
-            optimizer = SPSA(maxiter=80)  # SPSA better for large problems
+            # LARGE PROBLEMS: Reduced shots
+            logger.warning("Strategy: Reduced sampling (memory-constrained)")
+            
+            # FIX: Use run_options
+            sampler = Sampler(run_options={"shots": 1024, "seed": 42})
+            optimizer = SPSA(maxiter=80)
             adjusted_reps = min(reps, 3)
-            method_note = "tensor network (1024 shots)"
+            method_note = "reduced sampling (1024 shots)"
         
         # ============================================
         # QAOA EXECUTION
@@ -180,7 +155,7 @@ def solve_quantum_vrp(
             for route in routes:
                 if isinstance(route, (list, tuple, np.ndarray)):
                     formatted_route = [int(x) for x in route]
-                    if formatted_route:  # Ensure non-empty
+                    if formatted_route:
                         formatted_routes.append(formatted_route)
             
             if not formatted_routes:
