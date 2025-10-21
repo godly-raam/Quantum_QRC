@@ -246,8 +246,9 @@ def optimize_routes(problem: VrpProblem):
                     problem.num_vehicles
                 )
                 
-                routes = solution.routes
-                total_distance = solution.total_distance
+                # Convert numpy types to Python native types
+                routes = [[int(loc) for loc in route] for route in solution.routes]
+                total_distance = float(solution.total_distance)
                 execution_time = time.time() - start_time
                 is_quantum = True
                 method = "Quantum Reservoir Computing"
@@ -275,7 +276,9 @@ def optimize_routes(problem: VrpProblem):
                 reps=problem.reps
             )
             
-            total_distance = metrics.total_distance
+            # Convert numpy types to Python native types
+            routes = [[int(loc) for loc in route] for route in routes]
+            total_distance = float(metrics.total_distance)
             execution_time = time.time() - start_time
             is_quantum = metrics.is_valid_quantum_solution
             method = "Quantum QAOA" if is_quantum else "Classical Fallback"
@@ -284,13 +287,13 @@ def optimize_routes(problem: VrpProblem):
         # Store routes
         current_problem_state['current_routes'] = routes
         
-        # Calculate distances
+        # Calculate distances (ensure Python native types)
         distances = []
         for route in routes:
-            route_dist = 0
+            route_dist = 0.0
             for i in range(len(route) - 1):
-                route_dist += distance_matrix[route[i], route[i+1]]
-            distances.append(float(route_dist))
+                route_dist += float(distance_matrix[route[i], route[i+1]])
+            distances.append(route_dist)
         
         logger.info(f"✓ Optimization complete: {len(routes)} routes, {total_distance:.2f} total")
         
@@ -298,9 +301,9 @@ def optimize_routes(problem: VrpProblem):
             "routes": routes,
             "distances": distances,
             "coordinates": coords.tolist(),
-            "total_distance": float(total_distance),
+            "total_distance": total_distance,
             "solution_method": method,
-            "execution_time": float(execution_time),
+            "execution_time": execution_time,
             "is_quantum_solution": is_quantum,
             "notes": notes
         }
