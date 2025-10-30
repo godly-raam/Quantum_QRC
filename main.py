@@ -4,6 +4,7 @@ import os
 import sys
 import logging
 import time
+import asyncio
 from typing import Optional, Dict, Any, List
 sys.path.append('./modules')
 
@@ -97,6 +98,14 @@ async def startup_event():
     logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
     logger.info(f"Training instances: {os.getenv('QRC_TRAINING_INSTANCES', '15')}")
     logger.info("=" * 80)
+    
+    # Run the training in the background instead of blocking the server
+    logger.info("Scheduling QRC training as a background task...")
+    asyncio.create_task(initialize_qrc_solver_async())
+
+async def initialize_qrc_solver_async():
+    """Asynchronous wrapper for the blocking training function."""
+    # This will run in the background without stopping the server
     initialize_qrc_solver()
 
 # ============================================================
