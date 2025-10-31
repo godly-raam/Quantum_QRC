@@ -1,4 +1,4 @@
-# main.py - QRC-Enhanced Backend with Real-Time Adaptation
+# main.py - QRC-Enhanced Backend with NON-BLOCKING Startup
 
 import os
 import sys
@@ -25,7 +25,7 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# CORS configuration - CRITICAL for frontend communication
+# CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,7 +36,6 @@ app.add_middleware(
     max_age=3600,
 )
 
-# Additional CORS handler for edge cases
 @app.middleware("http")
 async def enhanced_cors_handler(request: Request, call_next):
     if request.method == "OPTIONS":
@@ -63,9 +62,15 @@ async def enhanced_cors_handler(request: Request, call_next):
         )
 
 # ============================================================
-# GLOBAL STATE: Quantum Reservoir (trained once, persists)
+# GLOBAL STATE
 # ============================================================
 qrc_solver = None
+training_status = {
+    'status': 'pending',  # pending, training, ready, failed
+    'progress': 0,
+    'message': 'Waiting to start training'
+}
+
 current_problem_state = {
     'distance_matrix': None,
     'coordinates': None,
@@ -74,39 +79,75 @@ current_problem_state = {
     'num_vehicles': 2
 }
 
-def initialize_qrc_solver():
-    """Initialize and train QRC solver on startup."""
-    global qrc_solver
+async def initialize_qrc_solver_async():
+    """
+    CRITICAL FIX: Run training in a separate thread to avoid blocking.
+    """
+    global qrc_solver, training_status
     
-    if qrc_solver is None:
+    try:
+        training_status['status'] = 'training'
+        training_status['message'] = 'Initializing quantum reservoir...'
+        
         logger.info("🌌 Initializing Quantum Reservoir Computing solver...")
         
-        qrc_solver = ReservoirVRPSolver(n_reservoir_qubits=8)
+        # Run blocking initialization in thread pool
+        loop = asyncio.get_event_loop()
+        qrc_solver = await loop.run_in_executor(
+            None,
+            ReservoirVRPSolver,
+            8  # n_reservoir_qubits
+        )
         
-        logger.info("🎓 Training reservoir (this takes ~30 seconds)...")
+        training_status['progress'] = 30
+        training_status['message'] = 'Generating training data...'
+        
+        logger.info("🎓 Training reservoir (background process)...")
         training_instances = int(os.getenv("QRC_TRAINING_INSTANCES", "15"))
-        training_data = generate_synthetic_training_data(n_instances=training_instances)
-        qrc_solver.train(training_data, max_epochs=30)
+        
+        # Generate training data in thread pool
+        training_data = await loop.run_in_executor(
+            None,
+            generate_synthetic_training_data,
+            training_instances
+        )
+        
+        training_status['progress'] = 60
+        training_status['message'] = f'Training on {training_instances} instances...'
+        
+        # Train in thread pool (this is the slow part)
+        await loop.run_in_executor(
+            None,
+            qrc_solver.train,
+            training_data,
+            30  # max_epochs
+        )
+        
+        training_status['status'] = 'ready'
+        training_status['progress'] = 100
+        training_status['message'] = 'QRC trained and ready!'
         
         logger.info("✅ Quantum Reservoir ready for real-time adaptation!")
+        
+    except Exception as e:
+        logger.error(f"Training failed: {e}", exc_info=True)
+        training_status['status'] = 'failed'
+        training_status['message'] = f'Training failed: {str(e)}'
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize QRC solver when server starts."""
+    """Initialize QRC solver when server starts - NON-BLOCKING."""
     logger.info("=" * 80)
     logger.info("Q-FLEET QRC BACKEND STARTING...")
     logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
     logger.info(f"Training instances: {os.getenv('QRC_TRAINING_INSTANCES', '15')}")
     logger.info("=" * 80)
     
-    # Run the training in the background instead of blocking the server
-    logger.info("Scheduling QRC training as a background task...")
+    # CRITICAL: Start training in background WITHOUT awaiting it
+    # This allows the server to start accepting requests immediately
     asyncio.create_task(initialize_qrc_solver_async())
-
-async def initialize_qrc_solver_async():
-    """Asynchronous wrapper for the blocking training function."""
-    # This will run in the background without stopping the server
-    initialize_qrc_solver()
+    
+    logger.info("✓ Server ready! QRC training running in background...")
 
 # ============================================================
 # PYDANTIC MODELS
@@ -130,11 +171,11 @@ class VrpResponse(BaseModel):
 
 class TrafficJamEvent(BaseModel):
     jam_locations: List[List[int]] = Field(..., description="List of [from, to] location pairs experiencing traffic")
-    jam_severity: float = Field(2.5, ge=1.0, le=5.0, description="Traffic severity multiplier (1.0=normal, 5.0=severe)")
+    jam_severity: float = Field(2.5, ge=1.0, le=5.0, description="Traffic severity multiplier")
 
 class PriorityDeliveryEvent(BaseModel):
     priority_location: int = Field(..., ge=1, description="New urgent delivery location index")
-    priority_level: int = Field(1, ge=1, le=3, description="Priority level (1=urgent, 3=low)")
+    priority_level: int = Field(1, ge=1, le=3, description="Priority level")
 
 class AdaptationResponse(BaseModel):
     routes: list
@@ -157,17 +198,55 @@ def root():
         "service": "Q-Fleet Quantum Reservoir Computing API",
         "version": "2.0.0",
         "status": "operational",
-        "qrc_status": "trained" if (qrc_solver and qrc_solver.trained) else "initializing",
+        "qrc_training_status": training_status['status'],
+        "qrc_ready": training_status['status'] == 'ready',
         "documentation": "/docs",
         "health_check": "/api/health",
+        "training_status": "/api/training-status",
         "main_endpoints": {
             "optimize": "POST /api/optimize",
             "traffic_jam": "POST /api/traffic-jam",
-            "priority_delivery": "POST /api/priority-delivery",
-            "compare_methods": "POST /api/compare-methods",
-            "current_state": "GET /api/current-state",
-            "reset": "POST /api/reset"
+            "priority_delivery": "POST /api/priority-delivery"
         }
+    }
+
+@app.get("/api/health")
+def health_check():
+    """Health check endpoint for Render."""
+    logger.info("Health check endpoint called.")
+    return {
+        "status": "healthy",
+        "message": "Q-Fleet API is running!",
+        "server": "operational",
+        "qrc_status": training_status['status']
+    }
+
+@app.get("/api/training-status")
+def get_training_status():
+    """Check QRC training progress."""
+    return {
+        "status": training_status['status'],
+        "progress": training_status['progress'],
+        "message": training_status['message'],
+        "ready": training_status['status'] == 'ready'
+    }
+
+@app.get("/api/qrc-status")
+def qrc_status():
+    """Debug endpoint for QRC system status."""
+    if not qrc_solver:
+        return {
+            "status": "not_initialized",
+            "training": training_status
+        }
+    
+    return {
+        "status": "initialized",
+        "trained": qrc_solver.trained,
+        "n_locations": qrc_solver.n_locations,
+        "n_vehicles": qrc_solver.n_vehicles,
+        "reservoir_qubits": qrc_solver.reservoir.n_qubits,
+        "training": training_status
     }
 
 @app.options("/{path:path}")
@@ -182,36 +261,15 @@ async def options_handler(path: str):
         }
     )
 
-@app.get("/api/health")
-def health_check():
-    logger.info("Health check endpoint called.")
-    qrc_status = "trained" if qrc_solver and qrc_solver.trained else "not trained"
-    return {
-        "status": "healthy",
-        "message": "Q-Fleet API with QRC is running!",
-        "qrc_status": qrc_status
-    }
-
-@app.get("/api/qrc-status")
-def qrc_status():
-    """Debug endpoint for QRC system status."""
-    if not qrc_solver:
-        return {"status": "not_initialized"}
-    
-    return {
-        "status": "initialized",
-        "trained": qrc_solver.trained,
-        "n_locations": qrc_solver.n_locations,
-        "n_vehicles": qrc_solver.n_vehicles,
-        "reservoir_qubits": qrc_solver.reservoir.n_qubits,
-        "reservoir_dim": qrc_solver.reservoir.dim,
-        "has_readout": qrc_solver.readout_model is not None
-    }
-
 @app.post("/api/optimize", response_model=VrpResponse)
 def optimize_routes(problem: VrpProblem):
-    """Main optimization endpoint. Supports both QAOA and QRC methods."""
+    """Main optimization endpoint."""
     logger.info(f"Received VRP request: {problem.dict()}")
+    
+    # Check if QRC is ready (if requested)
+    if problem.use_qrc and training_status['status'] != 'ready':
+        logger.warning(f"QRC requested but not ready (status: {training_status['status']}). Using QAOA.")
+        problem.use_qrc = False
     
     try:
         # Generate problem instance
@@ -233,15 +291,11 @@ def optimize_routes(problem: VrpProblem):
         
         # Check QRC compatibility
         if problem.use_qrc and qrc_solver and qrc_solver.trained:
-            logger.info("Using Quantum Reservoir Computing...")
-            logger.info(f"Problem: {problem.num_locations + 1} locs, {problem.num_vehicles} vehicles")
-            logger.info(f"QRC trained on: {qrc_solver.n_locations} locs, {qrc_solver.n_vehicles} vehicles")
-            
             if problem.num_locations + 1 > qrc_solver.n_locations:
-                logger.warning(f"Problem too large for QRC. Using QAOA instead.")
+                logger.warning(f"Problem too large for QRC. Using QAOA.")
                 problem.use_qrc = False
             elif problem.num_vehicles > qrc_solver.n_vehicles:
-                logger.warning(f"Too many vehicles for QRC. Using QAOA instead.")
+                logger.warning(f"Too many vehicles for QRC. Using QAOA.")
                 problem.use_qrc = False
         
         # Try QRC if compatible
@@ -255,7 +309,6 @@ def optimize_routes(problem: VrpProblem):
                     problem.num_vehicles
                 )
                 
-                # Convert numpy types to Python native types
                 routes = [[int(loc) for loc in route] for route in solution.routes]
                 total_distance = float(solution.total_distance)
                 execution_time = time.time() - start_time
@@ -266,11 +319,8 @@ def optimize_routes(problem: VrpProblem):
                 if not routes or len(routes) == 0:
                     raise ValueError("QRC returned empty routes")
                 
-                logger.info(f"QRC solution: {len(routes)} routes, {total_distance:.2f} total")
-                
             except Exception as qrc_error:
-                logger.error(f"QRC failed: {qrc_error}", exc_info=True)
-                logger.warning("Falling back to QAOA...")
+                logger.error(f"QRC failed: {qrc_error}")
                 problem.use_qrc = False
         
         # Use QAOA if QRC not used or failed
@@ -285,7 +335,6 @@ def optimize_routes(problem: VrpProblem):
                 reps=problem.reps
             )
             
-            # Convert numpy types to Python native types
             routes = [[int(loc) for loc in route] for route in routes]
             total_distance = float(metrics.total_distance)
             execution_time = time.time() - start_time
@@ -296,15 +345,13 @@ def optimize_routes(problem: VrpProblem):
         # Store routes
         current_problem_state['current_routes'] = routes
         
-        # Calculate distances (ensure Python native types)
+        # Calculate distances
         distances = []
         for route in routes:
             route_dist = 0.0
             for i in range(len(route) - 1):
                 route_dist += float(distance_matrix[route[i], route[i+1]])
             distances.append(route_dist)
-        
-        logger.info(f"✓ Optimization complete: {len(routes)} routes, {total_distance:.2f} total")
         
         return {
             "routes": routes,
@@ -321,17 +368,14 @@ def optimize_routes(problem: VrpProblem):
         logger.error(f"Error in optimize_routes: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Optimization failed: {str(e)}")
 
-# ============================================================
-# REAL-TIME ADAPTATION ENDPOINTS
-# ============================================================
-
 @app.post("/api/traffic-jam", response_model=AdaptationResponse)
 def handle_traffic_jam(event: TrafficJamEvent):
     """Real-time adaptation to traffic congestion."""
-    logger.warning(f"🚨 TRAFFIC JAM EVENT: {len(event.jam_locations)} affected routes")
-    
-    if not qrc_solver or not qrc_solver.trained:
-        raise HTTPException(status_code=400, detail="QRC solver not initialized")
+    if training_status['status'] != 'ready':
+        raise HTTPException(
+            status_code=503,
+            detail=f"QRC not ready yet. Status: {training_status['message']}"
+        )
     
     if current_problem_state['distance_matrix'] is None:
         raise HTTPException(status_code=400, detail="No active problem. Call /api/optimize first")
@@ -363,17 +407,15 @@ def handle_traffic_jam(event: TrafficJamEvent):
         
         adaptation_time = time.time() - start_time
         
-        logger.info(f"✅ Traffic jam adaptation complete in {adaptation_time:.3f}s")
-        
         return {
             "routes": adapted_solution.routes,
             "distances": distances,
             "coordinates": current_problem_state['coordinates'].tolist(),
             "total_distance": adapted_solution.total_distance,
             "adaptation_time": adaptation_time,
-            "method": "Quantum Reservoir Computing (Real-Time Adaptation)",
+            "method": "Quantum Reservoir Computing",
             "event_type": "traffic_jam",
-            "notes": f"Adapted to traffic jam in {adaptation_time:.3f}s"
+            "notes": f"Adapted in {adaptation_time:.3f}s"
         }
         
     except Exception as e:
@@ -383,20 +425,17 @@ def handle_traffic_jam(event: TrafficJamEvent):
 @app.post("/api/priority-delivery", response_model=AdaptationResponse)
 def handle_priority_delivery(event: PriorityDeliveryEvent):
     """Real-time adaptation to priority delivery request."""
-    logger.warning(f"🚨 PRIORITY DELIVERY: Location {event.priority_location}")
-    
-    if not qrc_solver or not qrc_solver.trained:
-        raise HTTPException(status_code=400, detail="QRC solver not initialized")
+    if training_status['status'] != 'ready':
+        raise HTTPException(
+            status_code=503,
+            detail=f"QRC not ready yet. Status: {training_status['message']}"
+        )
     
     if current_problem_state['distance_matrix'] is None:
         raise HTTPException(status_code=400, detail="No active problem. Call /api/optimize first")
     
     try:
         start_time = time.time()
-        
-        n_locations = current_problem_state['distance_matrix'].shape[0]
-        if event.priority_location >= n_locations:
-            raise ValueError(f"Invalid priority location {event.priority_location}")
         
         adapted_solution = qrc_solver.adapt_to_priority_delivery(
             current_problem_state['current_routes'],
@@ -418,15 +457,13 @@ def handle_priority_delivery(event: PriorityDeliveryEvent):
         
         adaptation_time = time.time() - start_time
         
-        logger.info(f"✅ Priority delivery adaptation complete in {adaptation_time:.3f}s")
-        
         return {
             "routes": adapted_solution.routes,
             "distances": distances,
             "coordinates": current_problem_state['coordinates'].tolist(),
             "total_distance": adapted_solution.total_distance,
             "adaptation_time": adaptation_time,
-            "method": "Quantum Reservoir Computing (Real-Time Adaptation)",
+            "method": "Quantum Reservoir Computing",
             "event_type": "priority_delivery",
             "notes": f"Added priority delivery in {adaptation_time:.3f}s"
         }
@@ -446,9 +483,8 @@ def get_current_state():
         "num_locations": current_problem_state['distance_matrix'].shape[0],
         "num_vehicles": current_problem_state['num_vehicles'],
         "current_routes": current_problem_state['current_routes'],
-        "coordinates": current_problem_state['coordinates'].tolist(),
-        "traffic_multipliers": current_problem_state['traffic_multipliers'].tolist(),
-        "has_traffic_jam": bool(np.any(current_problem_state['traffic_multipliers'] > 1.5))
+        "has_traffic_jam": bool(np.any(current_problem_state['traffic_multipliers'] > 1.5)),
+        "qrc_ready": training_status['status'] == 'ready'
     }
 
 @app.post("/api/reset")
@@ -461,68 +497,6 @@ def reset_state():
     
     logger.info("Problem state reset")
     return {"status": "reset", "message": "Problem state cleared"}
-
-@app.post("/api/compare-methods")
-def compare_methods(problem: VrpProblem):
-    """Compare QAOA vs QRC."""
-    logger.info("Running comparison: QAOA vs QRC")
-    
-    try:
-        np.random.seed(123)
-        coords = np.random.randn(problem.num_locations + 1, 2) * 0.1 + [16.5, 80.5]
-        
-        distance_matrix = np.zeros((problem.num_locations + 1, problem.num_locations + 1))
-        for i in range(problem.num_locations + 1):
-            for j in range(i + 1, problem.num_locations + 1):
-                dist = np.linalg.norm(coords[i] - coords[j])
-                distance_matrix[i, j] = distance_matrix[j, i] = dist
-        
-        traffic_mult = np.ones_like(distance_matrix)
-        results = {}
-        
-        # QAOA
-        logger.info("Testing QAOA...")
-        start = time.time()
-        routes_qaoa, distances_qaoa, metrics_qaoa = quantum_solver.solve_quantum_vrp(
-            distance_matrix, problem.num_vehicles, 0, reps=problem.reps
-        )
-        qaoa_time = time.time() - start
-        
-        results['qaoa'] = {
-            'time': qaoa_time,
-            'distance': metrics_qaoa.total_distance,
-            'method': 'QAOA',
-            'routes': routes_qaoa
-        }
-        
-        # QRC
-        if qrc_solver and qrc_solver.trained:
-            logger.info("Testing QRC...")
-            start = time.time()
-            solution_qrc = qrc_solver.solve_realtime(
-                distance_matrix, traffic_mult, problem.num_vehicles
-            )
-            qrc_time = time.time() - start
-            
-            results['qrc'] = {
-                'time': qrc_time,
-                'distance': solution_qrc.total_distance,
-                'method': 'QRC',
-                'routes': solution_qrc.routes
-            }
-            
-            speedup = qaoa_time / qrc_time if qrc_time > 0 else 0
-            
-            results['comparison'] = {
-                'speedup': speedup,
-                'winner': 'QRC' if qrc_time < qaoa_time else 'QAOA'
-            }
-        
-        return results
-        
-    except Exception as e:
-        logger.error(f"Comparison failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Comparison failed: {str(e)}")
 
 if __name__ == "__main__":
     print("\n" + "=" * 80)
