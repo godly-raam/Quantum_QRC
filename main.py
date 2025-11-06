@@ -173,7 +173,7 @@ async def startup_event():
     logger.info("=" * 80)
     logger.info("Q-FLEET QRC BACKEND STARTING...")
     logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
-    logger.info(f"Training instances: {os.getenv('QRC_TRAINING_INSTANCES', '15')}")
+    logger.info(f"Training instances: {os.getenv('QRC_TRAINING_INSTANCES', '10')}")
     logger.info("=" * 80)
     
     # CRITICAL: Start training in background WITHOUT awaiting it
