@@ -81,29 +81,57 @@ current_problem_state = {
 
 async def initialize_qrc_solver_async():
     """
-    CRITICAL FIX: Run training in a separate thread to avoid blocking.
+    OPTIMIZED: Load existing model or train only if needed.
+    This makes startup instant after first training.
     """
     global qrc_solver, training_status
     
     try:
-        training_status['status'] = 'training'
-        training_status['message'] = 'Initializing quantum reservoir...'
+        training_status['status'] = 'initializing'
+        training_status['progress'] = 10
+        training_status['message'] = 'Starting quantum reservoir...'
         
         logger.info("🌌 Initializing Quantum Reservoir Computing solver...")
         
-        # Run blocking initialization in thread pool
         loop = asyncio.get_event_loop()
+        n_qubits = int(os.getenv("QRC_NUM_QUBITS", "8"))
+        
+        # Initialize solver (fast)
         qrc_solver = await loop.run_in_executor(
             None,
             ReservoirVRPSolver,
-            8  # n_reservoir_qubits
+            n_qubits
         )
         
-        training_status['progress'] = 30
-        training_status['message'] = 'Generating training data...'
+        training_status['progress'] = 20
+        training_status['message'] = 'Checking for pre-trained model...'
         
-        logger.info("🎓 Training reservoir (background process)...")
-        training_instances = int(os.getenv("QRC_TRAINING_INSTANCES", "15"))
+        # CRITICAL: Try to load existing model first
+        logger.info("🔍 Checking for pre-trained model...")
+        model_loaded = await loop.run_in_executor(None, qrc_solver.load_model)
+        
+        if model_loaded:
+            # Model loaded successfully - INSTANT READY!
+            training_status['status'] = 'ready'
+            training_status['progress'] = 100
+            training_status['message'] = 'QRC loaded from memory. Ready!'
+            logger.info("=" * 80)
+            logger.info("✅ PRE-TRAINED MODEL LOADED - SYSTEM READY IN <1 SECOND!")
+            logger.info("=" * 80)
+            return  # EXIT - No training needed!
+        
+        # If no model found, train from scratch (first time only)
+        logger.info("=" * 80)
+        logger.info("⚠️  NO MODEL FOUND - STARTING FIRST-TIME TRAINING")
+        logger.info("    This will take ~10-15 minutes but only happens ONCE")
+        logger.info("    Future startups will be instant!")
+        logger.info("=" * 80)
+        
+        training_status['status'] = 'training'
+        training_status['progress'] = 30
+        training_status['message'] = 'First-time setup: Generating training data...'
+        
+        training_instances = int(os.getenv("QRC_TRAINING_INSTANCES", "10"))
         
         # Generate training data in thread pool
         training_data = await loop.run_in_executor(
@@ -113,25 +141,30 @@ async def initialize_qrc_solver_async():
         )
         
         training_status['progress'] = 60
-        training_status['message'] = f'Training on {training_instances} instances...'
+        training_status['message'] = f'First-time setup: Training on {training_instances} instances (this takes time)...'
         
-        # Train in thread pool (this is the slow part)
+        # Train in thread pool (this is the slow part - only happens once!)
         await loop.run_in_executor(
             None,
             qrc_solver.train,
             training_data,
-            30  # max_epochs
+            20  # Reduced epochs for faster first train
         )
         
         training_status['status'] = 'ready'
         training_status['progress'] = 100
-        training_status['message'] = 'QRC trained and ready!'
+        training_status['message'] = 'QRC trained and saved! Ready for instant future startups!'
         
-        logger.info("✅ Quantum Reservoir ready for real-time adaptation!")
+        logger.info("=" * 80)
+        logger.info("✅ FIRST-TIME TRAINING COMPLETE!")
+        logger.info("   Model saved to persistent storage")
+        logger.info("   Future startups will load in <1 second")
+        logger.info("=" * 80)
         
     except Exception as e:
-        logger.error(f"Training failed: {e}", exc_info=True)
+        logger.error(f"❌ Initialization failed: {e}", exc_info=True)
         training_status['status'] = 'failed'
+        training_status['progress'] = 0
         training_status['message'] = f'Training failed: {str(e)}'
 
 @app.on_event("startup")

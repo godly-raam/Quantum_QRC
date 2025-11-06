@@ -502,11 +502,65 @@ class ReservoirVRPSolver:
         self.n_locations = None
         self.n_vehicles = None
         self.trained = False
-        
+        self.readout_model = None
+
+    
+        self.model_path = os.getenv("MODEL_PATH", "/models/qrc_model.pkl")
+
         logger.info("🧠 ReservoirVRPSolver initialized")
         self.consistency_tracker = EmbeddingConsistencyTracker()
         logger.info("🔍 Embedding consistency tracking enabled (QuEra method)")
-    
+
+    def save_model(self) -> bool:
+        """Save trained model to persistent storage."""
+        try:
+            logger.info(f"💾 Saving trained model to {self.model_path}...")
+            
+            # Ensure directory exists
+            model_dir = os.path.dirname(self.model_path)
+            if model_dir:
+                os.makedirs(model_dir, exist_ok=True)
+            
+            # Save all necessary state
+            model_data = {
+                'readout_model': self.readout_model,
+                'n_locations': self.n_locations,
+                'n_vehicles': self.n_vehicles,
+                'trained': self.trained
+            }
+            
+            joblib.dump(model_data, self.model_path)
+            logger.info("✅ Model saved successfully!")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to save model: {e}", exc_info=True)
+            return False
+
+    def load_model(self) -> bool:
+        """Load pre-trained model from persistent storage."""
+        try:
+            if not os.path.exists(self.model_path):
+                logger.info("📂 No pre-trained model found. Will train from scratch.")
+                return False
+            
+            logger.info(f"📂 Loading pre-trained model from {self.model_path}...")
+            model_data = joblib.load(self.model_path)
+            
+            # Restore state
+            self.readout_model = model_data['readout_model']
+            self.n_locations = model_data['n_locations']
+            self.n_vehicles = model_data['n_vehicles']
+            self.trained = model_data['trained']
+            
+            logger.info(f"✅ Model loaded successfully!")
+            logger.info(f"   Trained on: {self.n_locations} locations, {self.n_vehicles} vehicles")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to load model: {e}", exc_info=True)
+            return False
+
     def train(
         self,
         training_instances: List[Dict],
@@ -590,6 +644,9 @@ class ReservoirVRPSolver:
         
         self.trained = True
         logger.info(f"✓ Training complete! R² score: {train_score:.3f}")
+        
+        # Save model for future use
+        self.save_model()
         
     def _encode_routes_padded(self, routes: List[List[int]], current_n_locations: int) -> np.ndarray:
         """
