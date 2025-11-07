@@ -423,7 +423,10 @@ def handle_traffic_jam(event: TrafficJamEvent):
             jam_severity=event.jam_severity
         )
         
-        current_problem_state['current_routes'] = adapted_solution.routes
+        # Convert routes to pure Python types (FIX for numpy serialization)
+        routes = [[int(loc) for loc in route] for route in adapted_solution.routes]
+        
+        current_problem_state['current_routes'] = routes
         
         for (i, j) in event.jam_locations:
             current_problem_state['traffic_multipliers'][i, j] = event.jam_severity
@@ -432,28 +435,30 @@ def handle_traffic_jam(event: TrafficJamEvent):
         distances = []
         adjusted_matrix = current_problem_state['distance_matrix'] * current_problem_state['traffic_multipliers']
         
-        for route in adapted_solution.routes:
+        for route in routes:
             route_dist = 0
             for i in range(len(route) - 1):
                 route_dist += adjusted_matrix[route[i], route[i+1]]
-            distances.append(float(route_dist))
+            distances.append(float(route_dist))  # Ensure float, not numpy.float64
         
         adaptation_time = time.time() - start_time
         
+        # Convert all numpy types to Python native types
         return {
-            "routes": adapted_solution.routes,
-            "distances": distances,
+            "routes": routes,  # Already converted above
+            "distances": distances,  # Already converted to float
             "coordinates": current_problem_state['coordinates'].tolist(),
-            "total_distance": adapted_solution.total_distance,
-            "adaptation_time": adaptation_time,
+            "total_distance": float(adapted_solution.total_distance),  # Ensure float
+            "adaptation_time": float(adaptation_time),  # Ensure float
             "method": "Quantum Reservoir Computing",
             "event_type": "traffic_jam",
             "notes": f"Adapted in {adaptation_time:.3f}s"
         }
         
     except Exception as e:
-        logger.error(f"Traffic jam adaptation failed: {str(e)}")
+        logger.error(f"Traffic jam adaptation failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Adaptation failed: {str(e)}")
+
 
 @app.post("/api/priority-delivery", response_model=AdaptationResponse)
 def handle_priority_delivery(event: PriorityDeliveryEvent):
@@ -477,32 +482,36 @@ def handle_priority_delivery(event: PriorityDeliveryEvent):
             current_problem_state['traffic_multipliers']
         )
         
-        current_problem_state['current_routes'] = adapted_solution.routes
+        # Convert routes to pure Python types (FIX for numpy serialization)
+        routes = [[int(loc) for loc in route] for route in adapted_solution.routes]
+        
+        current_problem_state['current_routes'] = routes
         
         distances = []
         adjusted_matrix = current_problem_state['distance_matrix'] * current_problem_state['traffic_multipliers']
         
-        for route in adapted_solution.routes:
+        for route in routes:
             route_dist = 0
             for i in range(len(route) - 1):
                 route_dist += adjusted_matrix[route[i], route[i+1]]
-            distances.append(float(route_dist))
+            distances.append(float(route_dist))  # Ensure float
         
         adaptation_time = time.time() - start_time
         
+        # Convert all numpy types to Python native types
         return {
-            "routes": adapted_solution.routes,
-            "distances": distances,
+            "routes": routes,  # Already converted above
+            "distances": distances,  # Already converted to float
             "coordinates": current_problem_state['coordinates'].tolist(),
-            "total_distance": adapted_solution.total_distance,
-            "adaptation_time": adaptation_time,
+            "total_distance": float(adapted_solution.total_distance),  # Ensure float
+            "adaptation_time": float(adaptation_time),  # Ensure float
             "method": "Quantum Reservoir Computing",
             "event_type": "priority_delivery",
             "notes": f"Added priority delivery in {adaptation_time:.3f}s"
         }
         
     except Exception as e:
-        logger.error(f"Priority delivery adaptation failed: {str(e)}")
+        logger.error(f"Priority delivery adaptation failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Adaptation failed: {str(e)}")
 
 @app.get("/api/current-state")
