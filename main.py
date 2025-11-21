@@ -5,6 +5,9 @@ import sys
 import logging
 import time
 import asyncio
+import json
+import uuid
+import redis
 from typing import Optional, Dict, Any, List
 sys.path.append('./modules')
 
@@ -24,6 +27,9 @@ app = FastAPI(
     description="Revolutionary quantum-classical hybrid VRP solver with real-time adaptation",
     version="2.0.0"
 )
+
+# Redis Connection
+redis_client = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
 
 # CORS configuration
 app.add_middleware(
@@ -71,13 +77,7 @@ training_status = {
     'message': 'Waiting to start training'
 }
 
-current_problem_state = {
-    'distance_matrix': None,
-    'coordinates': None,
-    'current_routes': None,
-    'traffic_multipliers': None,
-    'num_vehicles': 2
-}
+# REMOVED: current_problem_state (Replaced by Redis)
 
 async def initialize_qrc_solver_async():
     """
@@ -193,6 +193,7 @@ class VrpProblem(BaseModel):
     use_qrc: bool = Field(False, description="Use Quantum Reservoir Computing")
 
 class VrpResponse(BaseModel):
+    problem_id: str
     routes: list
     distances: list
     coordinates: list
@@ -203,10 +204,12 @@ class VrpResponse(BaseModel):
     notes: str
 
 class TrafficJamEvent(BaseModel):
+    problem_id: str
     jam_locations: List[List[int]] = Field(..., description="List of [from, to] location pairs experiencing traffic")
     jam_severity: float = Field(2.5, ge=1.0, le=5.0, description="Traffic severity multiplier")
 
 class PriorityDeliveryEvent(BaseModel):
+    problem_id: str
     priority_location: int = Field(..., ge=1, description="New urgent delivery location index")
     priority_level: int = Field(1, ge=1, le=3, description="Priority level")
 
@@ -299,6 +302,12 @@ def optimize_routes(problem: VrpProblem):
     """Main optimization endpoint."""
     logger.info(f"Received VRP request: {problem.dict()}")
     
+    # Input Guardrails
+    if problem.num_locations > 8:
+        if problem.use_qrc:
+            logger.warning("Problem too large for QRC simulation (max 8). Switching to classical.")
+            problem.use_qrc = False
+            
     # Check if QRC is ready (if requested)
     if problem.use_qrc and training_status['status'] != 'ready':
         logger.warning(f"QRC requested but not ready (status: {training_status['status']}). Using QAOA.")
@@ -306,7 +315,7 @@ def optimize_routes(problem: VrpProblem):
     
     try:
         # Generate problem instance
-        np.random.seed(123)
+        np.random.seed(123) # Keep seed for reproducibility of demo, or remove for real random
         depot_node = 0
         coords = np.random.randn(problem.num_locations + 1, 2) * 0.1 + [16.5, 80.5]
         
@@ -316,11 +325,7 @@ def optimize_routes(problem: VrpProblem):
                 dist = np.linalg.norm(coords[i] - coords[j])
                 distance_matrix[i, j] = distance_matrix[j, i] = dist
         
-        # Store in global state
-        current_problem_state['distance_matrix'] = distance_matrix
-        current_problem_state['coordinates'] = coords
-        current_problem_state['num_vehicles'] = problem.num_vehicles
-        current_problem_state['traffic_multipliers'] = np.ones_like(distance_matrix)
+        traffic_multipliers = np.ones_like(distance_matrix)
         
         # Check QRC compatibility
         if problem.use_qrc and qrc_solver and qrc_solver.trained:
@@ -338,7 +343,7 @@ def optimize_routes(problem: VrpProblem):
             try:
                 solution = qrc_solver.solve_realtime(
                     distance_matrix,
-                    current_problem_state['traffic_multipliers'],
+                    traffic_multipliers,
                     problem.num_vehicles
                 )
                 
@@ -375,9 +380,6 @@ def optimize_routes(problem: VrpProblem):
             method = "Quantum QAOA" if is_quantum else "Classical Fallback"
             notes = metrics.notes
         
-        # Store routes
-        current_problem_state['current_routes'] = routes
-        
         # Calculate distances
         distances = []
         for route in routes:
@@ -385,8 +387,21 @@ def optimize_routes(problem: VrpProblem):
             for i in range(len(route) - 1):
                 route_dist += float(distance_matrix[route[i], route[i+1]])
             distances.append(route_dist)
+            
+        # Store state in Redis
+        problem_id = str(uuid.uuid4())
+        state = {
+            "distance_matrix": distance_matrix.tolist(),
+            "coordinates": coords.tolist(),
+            "current_routes": routes,
+            "traffic_multipliers": traffic_multipliers.tolist(),
+            "num_vehicles": problem.num_vehicles,
+            "created_at": time.time()
+        }
+        redis_client.setex(f"problem:{problem_id}", 3600, json.dumps(state))
         
         return {
+            "problem_id": problem_id,
             "routes": routes,
             "distances": distances,
             "coordinates": coords.tolist(),
@@ -410,15 +425,23 @@ def handle_traffic_jam(event: TrafficJamEvent):
             detail=f"QRC not ready yet. Status: {training_status['message']}"
         )
     
-    if current_problem_state['distance_matrix'] is None:
-        raise HTTPException(status_code=400, detail="No active problem. Call /api/optimize first")
+    # Fetch state from Redis
+    state_json = redis_client.get(f"problem:{event.problem_id}")
+    if not state_json:
+        raise HTTPException(status_code=404, detail="Problem ID not found or expired")
+    
+    state = json.loads(state_json)
+    distance_matrix = np.array(state['distance_matrix'])
+    current_routes = state['current_routes']
+    traffic_multipliers = np.array(state['traffic_multipliers'])
+    coordinates = np.array(state['coordinates'])
     
     try:
         start_time = time.time()
         
         adapted_solution = qrc_solver.adapt_to_traffic_jam(
-            current_problem_state['current_routes'],
-            current_problem_state['distance_matrix'],
+            current_routes,
+            distance_matrix,
             jam_location_pairs=event.jam_locations,
             jam_severity=event.jam_severity
         )
@@ -426,14 +449,18 @@ def handle_traffic_jam(event: TrafficJamEvent):
         # Convert routes to pure Python types (FIX for numpy serialization)
         routes = [[int(loc) for loc in route] for route in adapted_solution.routes]
         
-        current_problem_state['current_routes'] = routes
-        
+        # Update state
         for (i, j) in event.jam_locations:
-            current_problem_state['traffic_multipliers'][i, j] = event.jam_severity
-            current_problem_state['traffic_multipliers'][j, i] = event.jam_severity
+            traffic_multipliers[i, j] = event.jam_severity
+            traffic_multipliers[j, i] = event.jam_severity
+            
+        # Save back to Redis
+        state['current_routes'] = routes
+        state['traffic_multipliers'] = traffic_multipliers.tolist()
+        redis_client.setex(f"problem:{event.problem_id}", 3600, json.dumps(state))
         
         distances = []
-        adjusted_matrix = current_problem_state['distance_matrix'] * current_problem_state['traffic_multipliers']
+        adjusted_matrix = distance_matrix * traffic_multipliers
         
         for route in routes:
             route_dist = 0
@@ -447,7 +474,7 @@ def handle_traffic_jam(event: TrafficJamEvent):
         return {
             "routes": routes,  # Already converted above
             "distances": distances,  # Already converted to float
-            "coordinates": current_problem_state['coordinates'].tolist(),
+            "coordinates": coordinates.tolist(),
             "total_distance": float(adapted_solution.total_distance),  # Ensure float
             "adaptation_time": float(adaptation_time),  # Ensure float
             "method": "Quantum Reservoir Computing",
@@ -469,26 +496,36 @@ def handle_priority_delivery(event: PriorityDeliveryEvent):
             detail=f"QRC not ready yet. Status: {training_status['message']}"
         )
     
-    if current_problem_state['distance_matrix'] is None:
-        raise HTTPException(status_code=400, detail="No active problem. Call /api/optimize first")
+    # Fetch state from Redis
+    state_json = redis_client.get(f"problem:{event.problem_id}")
+    if not state_json:
+        raise HTTPException(status_code=404, detail="Problem ID not found or expired")
+    
+    state = json.loads(state_json)
+    distance_matrix = np.array(state['distance_matrix'])
+    current_routes = state['current_routes']
+    traffic_multipliers = np.array(state['traffic_multipliers'])
+    coordinates = np.array(state['coordinates'])
     
     try:
         start_time = time.time()
         
         adapted_solution = qrc_solver.adapt_to_priority_delivery(
-            current_problem_state['current_routes'],
-            current_problem_state['distance_matrix'],
+            current_routes,
+            distance_matrix,
             event.priority_location,
-            current_problem_state['traffic_multipliers']
+            traffic_multipliers
         )
         
         # Convert routes to pure Python types (FIX for numpy serialization)
         routes = [[int(loc) for loc in route] for route in adapted_solution.routes]
         
-        current_problem_state['current_routes'] = routes
+        # Save back to Redis
+        state['current_routes'] = routes
+        redis_client.setex(f"problem:{event.problem_id}", 3600, json.dumps(state))
         
         distances = []
-        adjusted_matrix = current_problem_state['distance_matrix'] * current_problem_state['traffic_multipliers']
+        adjusted_matrix = distance_matrix * traffic_multipliers
         
         for route in routes:
             route_dist = 0
@@ -502,7 +539,7 @@ def handle_priority_delivery(event: PriorityDeliveryEvent):
         return {
             "routes": routes,  # Already converted above
             "distances": distances,  # Already converted to float
-            "coordinates": current_problem_state['coordinates'].tolist(),
+            "coordinates": coordinates.tolist(),
             "total_distance": float(adapted_solution.total_distance),  # Ensure float
             "adaptation_time": float(adaptation_time),  # Ensure float
             "method": "Quantum Reservoir Computing",
@@ -515,30 +552,24 @@ def handle_priority_delivery(event: PriorityDeliveryEvent):
         raise HTTPException(status_code=500, detail=f"Adaptation failed: {str(e)}")
 
 @app.get("/api/current-state")
-def get_current_state():
+def get_current_state(problem_id: str):
     """Get current problem state."""
-    if current_problem_state['distance_matrix'] is None:
-        return {"status": "no_problem", "message": "No active problem"}
+    state_json = redis_client.get(f"problem:{problem_id}")
+    if not state_json:
+        return {"status": "not_found", "message": "Problem ID not found or expired"}
+    
+    state = json.loads(state_json)
+    distance_matrix = np.array(state['distance_matrix'])
+    traffic_multipliers = np.array(state['traffic_multipliers'])
     
     return {
         "status": "active",
-        "num_locations": current_problem_state['distance_matrix'].shape[0],
-        "num_vehicles": current_problem_state['num_vehicles'],
-        "current_routes": current_problem_state['current_routes'],
-        "has_traffic_jam": bool(np.any(current_problem_state['traffic_multipliers'] > 1.5)),
+        "num_locations": distance_matrix.shape[0],
+        "num_vehicles": state['num_vehicles'],
+        "current_routes": state['current_routes'],
+        "has_traffic_jam": bool(np.any(traffic_multipliers > 1.5)),
         "qrc_ready": training_status['status'] == 'ready'
     }
-
-@app.post("/api/reset")
-def reset_state():
-    """Reset problem state."""
-    current_problem_state['distance_matrix'] = None
-    current_problem_state['coordinates'] = None
-    current_problem_state['current_routes'] = None
-    current_problem_state['traffic_multipliers'] = None
-    
-    logger.info("Problem state reset")
-    return {"status": "reset", "message": "Problem state cleared"}
 
 if __name__ == "__main__":
     print("\n" + "=" * 80)

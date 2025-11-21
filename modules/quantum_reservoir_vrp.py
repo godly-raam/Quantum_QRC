@@ -670,30 +670,44 @@ class ReservoirVRPSolver:
         """Encode routes as flat vector for training (legacy method)."""
         return self._encode_routes_padded(routes, self.n_locations)
     
-    def _decode_routes(self, encoding: np.ndarray) -> List[List[int]]:
-        """Decode flat vector back to routes."""
+    def _decode_routes(self, encoding: np.ndarray, active_n_locations: int = None) -> List[List[int]]:
+        """
+        Decode flat vector back to routes with validity guarantees.
+        
+        Ensures:
+        1. All active locations are visited exactly once
+        2. No duplicate visits
+        3. Assigned to vehicle with highest affinity
+        """
+        if active_n_locations is None:
+            active_n_locations = self.n_locations
+            
+        # Reshape to (n_vehicles, max_locations)
         matrix = encoding.reshape(self.n_vehicles, self.n_locations)
         
-        routes = []
-        for v_idx in range(self.n_vehicles):
-            route = [0]  # Start at depot
-            
-            # Assign locations with highest probability to this vehicle
-            assigned = np.where(matrix[v_idx] > 0.5)[0]
-            if len(assigned) > 0:
-                route.extend(sorted(assigned))
-            
-            route.append(0)  # Return to depot
-            
-            # Only add route if it visits at least one location
-            if len(route) > 2:
-                routes.append(route)
+        # Initialize routes with depot
+        routes = [[0] for _ in range(self.n_vehicles)]
         
-        # Ensure at least one route exists
-        if not routes:
-            routes = [[0, 1, 0]]
+        # Assign each location to the vehicle with highest score
+        # Only consider locations that exist in the current problem (1 to active_n_locations-1)
+        for loc in range(1, active_n_locations):
+            best_vehicle = np.argmax(matrix[:, loc])
+            routes[best_vehicle].append(loc)
+            
+        # Add return to depot and filter empty routes
+        final_routes = []
+        for route in routes:
+            route.append(0)
+            if len(route) > 2:  # Visits at least one location (0, loc, 0)
+                final_routes.append(route)
         
-        return routes
+        # Fallback if no valid routes (should be rare)
+        if not final_routes:
+            # Create one simple route visiting all locations
+            all_locs = list(range(1, active_n_locations))
+            final_routes = [[0] + all_locs + [0]]
+        
+        return final_routes
     
     def solve_realtime(
         self,
@@ -734,8 +748,8 @@ class ReservoirVRPSolver:
         # Predict routes (classical readout)
         route_encoding = self.readout_model.predict(features.reshape(1, -1))[0]
         
-        # Decode to actual routes
-        routes = self._decode_routes(route_encoding)
+        # Decode to actual routes (passing actual number of locations)
+        routes = self._decode_routes(route_encoding, active_n_locations=distance_matrix.shape[0])
         
         # Calculate total distance (with traffic)
         adjusted_matrix = distance_matrix * traffic_multipliers

@@ -16,13 +16,16 @@ class Settings(BaseSettings):
     API_DESCRIPTION: str = "First QRC system for real-time vehicle routing optimization"
     
     # CORS Settings
-    CORS_ORIGINS: list = ["*"]  # In production, restrict to specific domains
+    CORS_ORIGINS: list = os.getenv("ALLOWED_ORIGINS", "*").split(",")  # In production, restrict to specific domains
     
     # QRC Configuration
     QRC_NUM_QUBITS: int = int(os.getenv("QRC_NUM_QUBITS", "8"))
     QRC_COUPLING_STRENGTH: float = float(os.getenv("QRC_COUPLING_STRENGTH", "0.1"))
     QRC_TRAINING_INSTANCES: int = int(os.getenv("QRC_TRAINING_INSTANCES", "20"))
     QRC_AUTO_TRAIN: bool = os.getenv("QRC_AUTO_TRAIN", "true").lower() == "true"
+    
+    # Redis Configuration
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
     
     # Problem Constraints
     MAX_LOCATIONS: int = 8
