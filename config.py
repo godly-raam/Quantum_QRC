@@ -25,7 +25,8 @@ class Settings(BaseSettings):
     QRC_AUTO_TRAIN: bool = os.getenv("QRC_AUTO_TRAIN", "true").lower() == "true"
     
     # Redis Configuration
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
+    # Railway often provides REDIS_PRIVATE_URL for internal connections
+    REDIS_URL: str = os.getenv("REDIS_URL") or os.getenv("REDIS_PRIVATE_URL") or "redis://localhost:6379"
     
     # Problem Constraints
     MAX_LOCATIONS: int = 8
