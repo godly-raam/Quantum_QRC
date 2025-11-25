@@ -4,6 +4,7 @@ Utility functions for Q-Fleet QRC Backend
 """
 
 import numpy as np
+import requests
 import time
 from typing import List, Tuple, Dict
 import logging
@@ -11,36 +12,66 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def get_osrm_distance_matrix(coords: np.ndarray) -> np.ndarray:
+    """
+    Fetch real-world road distances using the OSRM public API.
+    
+    Args:
+        coords: Array of [lat, lon] coordinates
+    
+    Returns:
+        Distance matrix in KILOMETERS (to match your synthetic scale)
+    """
+    # OSRM requires "lon,lat" formatted strings joined by ";"
+    # Note: coords are [lat, lon], so we flip them for OSRM
+    coordinates_str = ";".join([f"{c[1]},{c[0]}" for c in coords])
+    
+    url = f"http://router.project-osrm.org/table/v1/driving/{coordinates_str}?annotations=distance"
+    
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            # OSRM returns meters. Convert to KM to match your current scale.
+            dist_matrix_meters = np.array(data['distances'])
+            dist_matrix_km = dist_matrix_meters / 1000.0 
+            return dist_matrix_km
+        else:
+            logger.warning(f"OSRM API failed: {response.status_code}")
+            return None
+    except Exception as e:
+        logger.warning(f"OSRM connection failed: {e}")
+        return None
+
+
 def generate_distance_matrix(
     num_locations: int, 
-    center: List[float] = [16.5, 80.5],
-    spread: float = 0.1,
+    center: list = [16.5, 80.5],
+    spread: float = 0.05, # Reduced spread so points are closer (better for routing)
     seed: int = 123
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Generate random VRP instance with coordinates and distance matrix.
-    
-    Args:
-        num_locations: Number of delivery locations (includes depot)
-        center: [lat, lon] center point (default: Vijayawada)
-        spread: Geographic spread in degrees
-        seed: Random seed for reproducibility
-    
-    Returns:
-        (coordinates, distance_matrix)
+    Generate VRP instance with REAL road distances.
     """
     np.random.seed(seed)
     
-    # Generate coordinates around center
+    # Generate coordinates around center (Vijayawada)
     coords = np.random.randn(num_locations, 2) * spread + center
     
-    # Calculate Euclidean distances
-    distance_matrix = np.zeros((num_locations, num_locations))
-    for i in range(num_locations):
-        for j in range(i + 1, num_locations):
-            dist = np.linalg.norm(coords[i] - coords[j])
-            distance_matrix[i, j] = distance_matrix[j, i] = dist
+    # 1. Try to get REAL road distances
+    logger.info("🌍 Fetching real road distances from OSRM...")
+    distance_matrix = get_osrm_distance_matrix(coords)
     
+    # 2. Fallback to Euclidean if OSRM fails
+    if distance_matrix is None:
+        logger.warning("⚠️ Using Euclidean fallback distances")
+        distance_matrix = np.zeros((num_locations, num_locations))
+        for i in range(num_locations):
+            for j in range(i + 1, num_locations):
+                # Approximate KM: 1 deg lat ~= 111km
+                d = np.linalg.norm(coords[i] - coords[j]) * 111.0
+                distance_matrix[i, j] = distance_matrix[j, i] = d
+                
     return coords, distance_matrix
 
 
