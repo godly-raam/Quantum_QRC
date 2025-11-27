@@ -191,6 +191,8 @@ class VrpProblem(BaseModel):
     num_vehicles: int = Field(..., ge=1, le=3, description="Number of vehicles (1-3)")
     reps: int = Field(4, ge=1, le=6, description="QAOA depth (1-6)")
     use_qrc: bool = Field(False, description="Use Quantum Reservoir Computing")
+    # NEW: Optional custom coordinates
+    custom_coordinates: Optional[List[List[float]]] = Field(None, description="List of [lat, lon] points. First is Depot.")
 
 class VrpResponse(BaseModel):
     problem_id: str
@@ -314,18 +316,39 @@ def optimize_routes(problem: VrpProblem):
         problem.use_qrc = False
     
     try:
-        # Generate problem instance
-        np.random.seed(123) # Keep seed for reproducibility of demo, or remove for real random
-        depot_node = 0
-        coords = np.random.randn(problem.num_locations + 1, 2) * 0.1 + [16.5, 80.5]
-        
-        distance_matrix = np.zeros((problem.num_locations + 1, problem.num_locations + 1))
-        for i in range(problem.num_locations + 1):
-            for j in range(i + 1, problem.num_locations + 1):
-                dist = np.linalg.norm(coords[i] - coords[j])
-                distance_matrix[i, j] = distance_matrix[j, i] = dist
-        
-        traffic_multipliers = np.ones_like(distance_matrix)
+        # LOGIC CHANGE: Use custom coordinates if provided
+        if problem.custom_coordinates and len(problem.custom_coordinates) >= 2:
+            logger.info(f"📍 Using {len(problem.custom_coordinates)} custom locations from user")
+            coords = np.array(problem.custom_coordinates)
+            
+            # Recalculate distance matrix for THESE specific points using OSRM
+            from modules.utils import get_osrm_distance_matrix
+            distance_matrix = get_osrm_distance_matrix(coords)
+            
+            if distance_matrix is None:
+                # Fallback if OSRM fails
+                distance_matrix = np.zeros((len(coords), len(coords)))
+                for i in range(len(coords)):
+                    for j in range(len(coords)):
+                        distance_matrix[i, j] = np.linalg.norm(coords[i] - coords[j]) * 111.0
+            
+            problem.num_locations = len(coords) - 1 # Exclude depot count
+            depot_node = 0
+            traffic_multipliers = np.ones_like(distance_matrix)
+            
+        else:
+            # Generate problem instance
+            np.random.seed(123) # Keep seed for reproducibility of demo, or remove for real random
+            depot_node = 0
+            coords = np.random.randn(problem.num_locations + 1, 2) * 0.1 + [16.5, 80.5]
+            
+            distance_matrix = np.zeros((problem.num_locations + 1, problem.num_locations + 1))
+            for i in range(problem.num_locations + 1):
+                for j in range(i + 1, problem.num_locations + 1):
+                    dist = np.linalg.norm(coords[i] - coords[j])
+                    distance_matrix[i, j] = distance_matrix[j, i] = dist
+            
+            traffic_multipliers = np.ones_like(distance_matrix)
         
         # Check QRC compatibility
         if problem.use_qrc and qrc_solver and qrc_solver.trained:
