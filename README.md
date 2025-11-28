@@ -13,15 +13,6 @@ This approach is based on novel research into quantum reservoirs, such as the wo
 * **Hybrid Solver:** The API can intelligently switch between the ultra-fast QRC solver and a traditional (but slower) QAOA solver for full-scale optimization.
 * **Self-Training:** On startup, the API automatically generates synthetic VRP data and trains the QRC model, making it instantly ready for requests.
 
-## Deployment
-
-This project is configured for **one-click deployment on Render.com**.
-
-The `render.yaml` file automatically instructs Render to:
-1.  Use the `free` tier.
-2.  Build the application using the provided `Dockerfile`.
-3.  Set all necessary environment variables.
-4.  Monitor the application's health at the `/api/health` endpoint.
 
 ## Key API Endpoints
 
