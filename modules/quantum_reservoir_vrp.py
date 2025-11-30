@@ -670,44 +670,52 @@ class ReservoirVRPSolver:
         """Encode routes as flat vector for training (legacy method)."""
         return self._encode_routes_padded(routes, self.n_locations)
     
-    def _decode_routes(self, encoding: np.ndarray, active_n_locations: int = None) -> List[List[int]]:
+    def _decode_routes(self, encoding: np.ndarray, active_locations: Optional[int] = None) -> List[List[int]]:
         """
-        Decode flat vector back to routes with validity guarantees.
+        Decode flat vector back to routes with Repair Logic (Winner-Takes-All).
         
         Ensures:
-        1. All active locations are visited exactly once
-        2. No duplicate visits
-        3. Assigned to vehicle with highest affinity
+        1. All valid locations are visited exactly once (no skips).
+        2. No duplicate visits.
+        3. No "phantom" locations (if problem size < training size).
         """
-        if active_n_locations is None:
-            active_n_locations = self.n_locations
-            
-        # Reshape to (n_vehicles, max_locations)
+        # 1. Reshape to (Vehicles x Max_Locations)
         matrix = encoding.reshape(self.n_vehicles, self.n_locations)
         
-        # Initialize routes with depot
-        routes = [[0] for _ in range(self.n_vehicles)]
+        # 2. Determine active problem size
+        # If active_locations is None, fallback to full training size
+        num_valid_locs = active_locations if active_locations is not None else self.n_locations
         
-        # Assign each location to the vehicle with highest score
-        # Only consider locations that exist in the current problem (1 to active_n_locations-1)
-        for loc in range(1, active_n_locations):
+        # 3. Initialize empty stops list for each vehicle
+        vehicle_stops = {v: [] for v in range(self.n_vehicles)}
+        
+        # 4. CRITICAL REPAIR STEP:
+        # Iterate strictly through VALID customer locations (1 to N)
+        # We skip 0 (Depot) and any padding locations.
+        for loc in range(1, num_valid_locs):
+            # Find the vehicle with the HIGHEST affinity for this location
+            # This guarantees the location is assigned to exactly one vehicle.
             best_vehicle = np.argmax(matrix[:, loc])
-            routes[best_vehicle].append(loc)
             
-        # Add return to depot and filter empty routes
-        final_routes = []
-        for route in routes:
-            route.append(0)
-            if len(route) > 2:  # Visits at least one location (0, loc, 0)
-                final_routes.append(route)
+            # Assign location to that vehicle
+            vehicle_stops[best_vehicle].append(loc)
+            
+        # 5. Construct final routes
+        routes = []
+        for v in range(self.n_vehicles):
+            if vehicle_stops[v]:
+                # Basic Polish: Sort locations to minimize "crossing" (simple 1D heuristic)
+                # Ideally, you'd run a quick 2-opt here for true "QEPO", but sort is instant.
+                sorted_stops = sorted(vehicle_stops[v])
+                routes.append([0] + sorted_stops + [0])
         
-        # Fallback if no valid routes (should be rare)
-        if not final_routes:
-            # Create one simple route visiting all locations
-            all_locs = list(range(1, active_n_locations))
-            final_routes = [[0] + all_locs + [0]]
-        
-        return final_routes
+        # 6. Safety Fallback: If absolutely no routes were valid (rare), 
+        # assign all jobs to Vehicle 0 to prevent crashes.
+        if not routes and num_valid_locs > 1:
+            all_locs = list(range(1, num_valid_locs))
+            routes.append([0] + all_locs + [0])
+            
+        return routes
     
     def solve_realtime(
         self,
@@ -749,7 +757,7 @@ class ReservoirVRPSolver:
         route_encoding = self.readout_model.predict(features.reshape(1, -1))[0]
         
         # Decode to actual routes (passing actual number of locations)
-        routes = self._decode_routes(route_encoding, active_n_locations=distance_matrix.shape[0])
+        routes = self._decode_routes(route_encoding, active_locations=distance_matrix.shape[0])
         
         # Calculate total distance (with traffic)
         adjusted_matrix = distance_matrix * traffic_multipliers
