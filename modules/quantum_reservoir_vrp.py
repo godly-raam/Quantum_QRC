@@ -2,14 +2,11 @@
 """
 Quantum Reservoir Computing for Real-Time Adaptive VRP
 
-BREAKTHROUGH APPROACH:
-- Quantum reservoir with random Hamiltonian provides exponential memory
-- Real-time adaptation to traffic jams and priority deliveries
-- No re-optimization needed - reservoir naturally adapts
-- First application of QRC to combinatorial optimization
+Quantum reservoir with random Hamiltonian provides exponential memory.
+Real-time adaptation to traffic jams and priority deliveries.
+No re-optimization needed - reservoir naturally adapts.
 
 Authors: Entangle Minds Team
-Status: NOVEL - No prior work exists on QRC for VRP
 """
 
 import numpy as np
@@ -596,7 +593,7 @@ class ReservoirVRPSolver:
         y_train = []
         
         for idx, instance in enumerate(training_instances):
-            # CRITICAL FIX: Reset reservoir state for each training instance
+            # Reset reservoir state for each training instance
             # This ensures consistent feature extraction
             self.reservoir.current_state = self.reservoir._initialize_state()
             self.reservoir.state_history = []
@@ -667,7 +664,7 @@ class ReservoirVRPSolver:
         return encoding.flatten()
 
     def _encode_routes(self, routes: List[List[int]]) -> np.ndarray:
-        """Encode routes as flat vector for training (legacy method)."""
+        """Encode routes as flat vector for training."""
         return self._encode_routes_padded(routes, self.n_locations)
     
     def _decode_routes(self, encoding: np.ndarray, active_locations: Optional[int] = None) -> List[List[int]]:
@@ -689,7 +686,7 @@ class ReservoirVRPSolver:
         # 3. Initialize empty stops list for each vehicle
         vehicle_stops = {v: [] for v in range(self.n_vehicles)}
         
-        # 4. CRITICAL REPAIR STEP:
+        # 4. Repair Step:
         # Iterate strictly through VALID customer locations (1 to N)
         # We skip 0 (Depot) and any padding locations.
         for loc in range(1, num_valid_locs):
@@ -789,8 +786,7 @@ class ReservoirVRPSolver:
         """
         REAL-TIME ADAPTATION: Traffic jam detected!
         
-        This is the KILLER DEMO feature. Update traffic multipliers
-        and get new routes in milliseconds.
+        Update traffic multipliers and get new routes in milliseconds.
         
         Args:
             current_routes: Current fleet routes

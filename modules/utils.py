@@ -22,7 +22,6 @@ def get_osrm_distance_matrix(coords: np.ndarray) -> np.ndarray:
     Returns:
         Distance matrix in KILOMETERS (to match your synthetic scale)
     """
-    # OSRM requires "lon,lat" formatted strings joined by ";"
     # Note: coords are [lat, lon], so we flip them for OSRM
     coordinates_str = ";".join([f"{c[1]},{c[0]}" for c in coords])
     

@@ -67,9 +67,7 @@ async def enhanced_cors_handler(request: Request, call_next):
             headers={"Access-Control-Allow-Origin": "*"}
         )
 
-# ============================================================
-# GLOBAL STATE
-# ============================================================
+# Global State
 qrc_solver = None
 training_status = {
     'status': 'pending',  # pending, training, ready, failed
@@ -77,11 +75,11 @@ training_status = {
     'message': 'Waiting to start training'
 }
 
-# REMOVED: current_problem_state (Replaced by Redis)
+
 
 async def initialize_qrc_solver_async():
     """
-    OPTIMIZED: Load existing model or train only if needed.
+    Load existing model or train only if needed.
     This makes startup instant after first training.
     """
     global qrc_solver, training_status
@@ -106,7 +104,7 @@ async def initialize_qrc_solver_async():
         training_status['progress'] = 20
         training_status['message'] = 'Checking for pre-trained model...'
         
-        # CRITICAL: Try to load existing model first
+        # Try to load existing model first
         logger.info("🔍 Checking for pre-trained model...")
         model_loaded = await loop.run_in_executor(None, qrc_solver.load_model)
         
@@ -176,15 +174,13 @@ async def startup_event():
     logger.info(f"Training instances: {os.getenv('QRC_TRAINING_INSTANCES', '10')}")
     logger.info("=" * 80)
     
-    # CRITICAL: Start training in background WITHOUT awaiting it
+    # Start training in background WITHOUT awaiting it
     # This allows the server to start accepting requests immediately
     asyncio.create_task(initialize_qrc_solver_async())
     
     logger.info("✓ Server ready! QRC training running in background...")
 
-# ============================================================
-# PYDANTIC MODELS
-# ============================================================
+# Pydantic Models
 
 class VrpProblem(BaseModel):
     num_locations: int = Field(..., ge=2, le=6, description="Number of locations (2-6)")
@@ -225,9 +221,7 @@ class AdaptationResponse(BaseModel):
     event_type: str
     notes: str
 
-# ============================================================
-# CORE ENDPOINTS
-# ============================================================
+# Core Endpoints
 
 @app.get("/")
 def root():
@@ -316,7 +310,7 @@ def optimize_routes(problem: VrpProblem):
         problem.use_qrc = False
     
     try:
-        # LOGIC CHANGE: Use custom coordinates if provided
+        # Use custom coordinates if provided
         if problem.custom_coordinates and len(problem.custom_coordinates) >= 2:
             logger.info(f"📍 Using {len(problem.custom_coordinates)} custom locations from user")
             coords = np.array(problem.custom_coordinates)
