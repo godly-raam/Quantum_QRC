@@ -94,11 +94,21 @@ async def initialize_qrc_solver_async():
         loop = asyncio.get_event_loop()
         n_qubits = int(os.getenv("QRC_NUM_QUBITS", "8"))
         
+        # Load Phase 3 offline trained parameters
+        weights_path = os.path.join(os.path.dirname(__file__), "weights", f"locked_reservoir_params_{n_qubits}q.npy")
+        trained_params = None
+        if os.path.exists(weights_path):
+            trained_params = np.load(weights_path)
+            logger.info(f"Loaded Phase 3 locked parameters from {weights_path}")
+        else:
+            logger.warning(f"No offline parameters found at {weights_path}. Running with random/unlocked parameters.")
+        
         # Initialize solver (fast)
         qrc_solver = await loop.run_in_executor(
             None,
             ReservoirVRPSolver,
-            n_qubits
+            n_qubits,
+            trained_params
         )
         
         training_status['progress'] = 20
