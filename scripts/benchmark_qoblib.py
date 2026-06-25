@@ -99,7 +99,7 @@ def run_qoblib_benchmark(filepath: str, reservoir_size: int = 27):
     
     # We use fewer iterations if it's 27 qubits because the statevector is large!
     # The instructions said `iterations=100`, let's run 5 to avoid OOM for testing
-    iterations = 5 if reservoir_size > 20 else 100
+    iterations = 100
     print(f"Running solver for {iterations} iterations...")
     pareto_front, qpu_time = solver.solve_multi_objective(Q_fuel, Q_time, iterations=iterations)
     

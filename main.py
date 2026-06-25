@@ -254,7 +254,7 @@ async def options_handler(path: str):
     )
 
 @app.post("/api/optimize", response_model=VrpResponse)
-def optimize_routes(problem: VrpProblem):
+async def optimize_routes(problem: VrpProblem):
     """Main optimization endpoint."""
     logger.info(f"Received VRP request: {problem.dict()}")
     
@@ -277,7 +277,12 @@ def optimize_routes(problem: VrpProblem):
             
             # Recalculate distance matrix for THESE specific points using OSRM
             from modules.utils import get_osrm_distance_matrix
-            distance_matrix = get_osrm_distance_matrix(coords)
+            loop = asyncio.get_running_loop()
+            distance_matrix = await loop.run_in_executor(
+                None,
+                get_osrm_distance_matrix,
+                coords
+            )
             
             if distance_matrix is None:
                 # Fallback if OSRM fails
