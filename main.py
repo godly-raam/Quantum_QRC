@@ -235,8 +235,6 @@ def qrc_status():
     return {
         "status": "initialized",
         "trained": qrc_solver.trained,
-        "n_locations": qrc_solver.n_locations,
-        "n_vehicles": qrc_solver.n_vehicles,
         "reservoir_qubits": qrc_solver.reservoir.n_qubits,
         "training": training_status
     }

@@ -72,13 +72,13 @@ We evaluated the Quantum Reservoir VRP backend against the standard QOBLIB datas
 | :--- | :--- |
 | **Instance** | XSH-n20-k4-01.vrp |
 | **Active Nodes / Reservoir Size** | 21 / 27 |
-| **Pareto Front Size** | 1 non-dominated solutions |
-| **Hypervolume (HV)** | 0.0000 |
-| **Total Wall-Clock Time** | 0.4524 s |
-| **Isolated QPU Time** | 0.0514 s |
-| **Best Fuel Cost (QRC)** | 1058.02 |
-| **Classical Baseline** | 500.00 |
-| **Absolute Optimality Gap** | 111.60% |
+| **Pareto Front Size** | 2 non-dominated solutions |
+| **Hypervolume (HV)** | 386303839.2769 |
+| **Total Wall-Clock Time** | 0.4643 s |
+| **Isolated QPU Time** | 0.4422 s |
+| **Best Fuel Cost (QRC)** | 826.98 |
+| **Classical Baseline** | 345.23 |
+| **Absolute Optimality Gap** | 139.54% |
 ```
 
 > **Note on Local Execution:** 
