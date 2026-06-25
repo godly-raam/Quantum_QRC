@@ -234,7 +234,8 @@ class QuantumReservoir:
         self.trained_params = trained_params
         self.reservoir_layers = reservoir_layers
         
-        np.random.seed(random_seed)
+        # FIX: Remove global np.random.seed(random_seed)
+        self.rng = np.random.default_rng(random_seed)
         
         # Current quantum state
         self.current_state = self._initialize_state()
@@ -294,7 +295,8 @@ class QuantumReservoir:
     
     def _initialize_state(self) -> np.ndarray:
         """Initialize reservoir in random quantum state."""
-        state = np.random.randn(self.dim) + 1j * np.random.randn(self.dim)
+        # FIX: Use isolated rng
+        state = self.rng.standard_normal(self.dim) + 1j * self.rng.standard_normal(self.dim)
         state /= np.linalg.norm(state)
         return state
     
@@ -448,10 +450,10 @@ class ReservoirVRPSolver:
     
     def __init__(self, n_reservoir_qubits: int = 10, trained_params: np.ndarray = None):
         self.reservoir = QuantumReservoir(n_reservoir_qubits, trained_params=trained_params)
-        self.n_locations = 0
-        self.n_vehicles = 0
-        logger.info("🧠 ReservoirVRPSolver initialized")
+        self.trained = trained_params is not None # FIX: Prevents 500 API crash
         self.consistency_tracker = EmbeddingConsistencyTracker()
+        # FIX: Removed self.n_locations and self.n_vehicles to prevent race conditions
+        logger.info("🧠 ReservoirVRPSolver initialized")
         logger.info("🔍 Embedding consistency tracking enabled (QuEra method)")
 
     def solve_multi_objective(self, Q_fuel: np.ndarray, Q_time: np.ndarray, iterations: int = 100) -> Tuple[List[Tuple[float, float]], float]:
@@ -470,8 +472,8 @@ class ReservoirVRPSolver:
         if active_locations == 0:
             active_locations = Q_fuel.shape[0]
             
-        self.n_locations = Q_fuel.shape[0]
-        self.n_vehicles = 4 # Default for k4 instance
+        n_locations = Q_fuel.shape[0] # Local variable
+        n_vehicles = 4 # Local variable
         
         logger.info(f"Running multi-objective loop for {iterations} iterations...")
         
@@ -482,7 +484,7 @@ class ReservoirVRPSolver:
             Q_combined, weights = generate_scalarized_cost_matrix(Q_fuel, Q_time)
             
             # Build and execute the locked architecture
-            qc_full = self.reservoir.build_full_architecture(Q_combined, Q_time, self.n_vehicles)
+            qc_full = self.reservoir.build_full_architecture(Q_combined, Q_time, n_vehicles)
             
             if self.reservoir.n_qubits > 20:
                 # OOM prevention: Mocking the feature vector for 27-qubits as classical statevector sim is too expensive
@@ -496,13 +498,14 @@ class ReservoirVRPSolver:
             qpu_time += (end_qpu - start_qpu)
             
             # Direct mapping from quantum features to route encoding (MO-QAOA feed-forward)
-            expected_len = self.n_vehicles * self.n_locations
+            expected_len = n_vehicles * n_locations
             if len(features) >= expected_len:
                 route_encoding = features[:expected_len]
             else:
                 route_encoding = np.pad(features, (0, expected_len - len(features)))
             
-            routes = self._decode_routes(route_encoding, active_locations=active_locations)
+            # Pass explicit local dimensions to decode
+            routes = self._decode_routes(route_encoding, n_vehicles, n_locations, active_locations=active_locations)
             
             # Calculate Fuel and Time costs
             fuel_cost = 0.0
@@ -530,29 +533,7 @@ class ReservoirVRPSolver:
         
         return non_dominated, qpu_time
 
-    def _encode_routes_padded(self, routes: List[List[int]], current_n_locations: int) -> np.ndarray:
-        """
-        Encode routes as flat vector with padding to max dimensions.
-        
-        This ensures all training instances produce the same output dimension.
-        """
-        # Create encoding matrix with MAX dimensions (not current)
-        encoding = np.zeros((self.n_vehicles, self.n_locations))
-        
-        for v_idx, route in enumerate(routes):
-            if v_idx >= self.n_vehicles:
-                break  # Skip extra vehicles beyond max
-            for loc in route:
-                if 0 < loc < self.n_locations:  # Skip depot (0) and out-of-bounds
-                    encoding[v_idx, loc] = 1.0
-        
-        return encoding.flatten()
-
-    def _encode_routes(self, routes: List[List[int]]) -> np.ndarray:
-        """Encode routes as flat vector for training."""
-        return self._encode_routes_padded(routes, self.n_locations)
-    
-    def _decode_routes(self, encoding: np.ndarray, active_locations: Optional[int] = None) -> List[List[int]]:
+    def _decode_routes(self, encoding: np.ndarray, n_vehicles: int, n_locations: int, active_locations: Optional[int] = None) -> List[List[int]]:
         """
         Decode flat vector back to routes with Repair Logic (Winner-Takes-All).
         
@@ -561,15 +542,11 @@ class ReservoirVRPSolver:
         2. No duplicate visits.
         3. No "phantom" locations (if problem size < training size).
         """
-        # 1. Reshape to (Vehicles x Max_Locations)
-        matrix = encoding.reshape(self.n_vehicles, self.n_locations)
+        matrix = encoding.reshape(n_vehicles, n_locations)
         
-        # 2. Determine active problem size
-        # If active_locations is None, fallback to full training size
-        num_valid_locs = active_locations if active_locations is not None else self.n_locations
+        num_valid_locs = active_locations if active_locations is not None else n_locations
         
-        # 3. Initialize empty stops list for each vehicle
-        vehicle_stops = {v: [] for v in range(self.n_vehicles)}
+        vehicle_stops = {v: [] for v in range(n_vehicles)}
         
         # 4. Repair Step:
         # Iterate strictly through VALID customer locations (1 to N)
@@ -584,7 +561,7 @@ class ReservoirVRPSolver:
             
         # 5. Construct final routes
         routes = []
-        for v in range(self.n_vehicles):
+        for v in range(n_vehicles):
             if vehicle_stops[v]:
                 # Basic Polish: Sort locations to minimize "crossing" (simple 1D heuristic)
                 # Ideally, you'd run a quick 2-opt here for true "QEPO", but sort is instant.
@@ -635,17 +612,17 @@ class ReservoirVRPSolver:
             
         features = np.mean(branch_features, axis=0)
         
-        # Direct mapping from quantum features to route encoding
-        self.n_locations = distance_matrix.shape[0]
-        self.n_vehicles = num_vehicles
-        expected_len = self.n_vehicles * self.n_locations
+        # FIX: Do not mutate self. Use local variables.
+        n_locations = distance_matrix.shape[0]
+        expected_len = num_vehicles * n_locations
+        
         if len(features) >= expected_len:
             route_encoding = features[:expected_len]
         else:
             route_encoding = np.pad(features, (0, expected_len - len(features)))
         
-        # Decode to actual routes (passing actual number of locations)
-        routes = self._decode_routes(route_encoding, active_locations=distance_matrix.shape[0])
+        # Pass explicit local dimensions
+        routes = self._decode_routes(route_encoding, num_vehicles, n_locations, active_locations=n_locations)
         
         # Calculate total distance (with traffic)
         adjusted_matrix = distance_matrix * traffic_multipliers

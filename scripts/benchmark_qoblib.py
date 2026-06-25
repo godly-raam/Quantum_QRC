@@ -47,12 +47,37 @@ def calculate_2d_hypervolume(pareto_front: List[Tuple[float, float]], reference_
             
     return hv
 
-def run_qoblib_benchmark(filepath: str, reference_point: Tuple[float, float], classical_baseline_cost: float, reservoir_size: int = 27):
+def compute_greedy_baseline(Q_fuel: np.ndarray, num_vehicles: int) -> float:
+    """Calculates a valid upper-bound classical baseline using a Nearest Neighbor heuristic."""
+    num_nodes = len(Q_fuel)
+    unvisited = set(range(1, num_nodes))
+    total_cost = 0.0
+
+    for _ in range(num_vehicles):
+        curr = 0
+        while unvisited:
+            next_node = min(unvisited, key=lambda x: Q_fuel[curr][x] if Q_fuel[curr][x] > 0 else float('inf'))
+            total_cost += Q_fuel[curr][next_node]
+            unvisited.remove(next_node)
+            curr = next_node
+        total_cost += Q_fuel[curr][0] # Return to depot
+    return total_cost
+
+def run_qoblib_benchmark(filepath: str, reservoir_size: int = 27):
     print(f"--- Starting Benchmark: {filepath} ---")
     
     # 1. Parse Data
     Q_fuel_raw, Q_time_raw = parse_vrp_instance(filepath)
     num_nodes = len(Q_fuel_raw)
+    num_vehicles = 4 # Or extract from the VRP filename k-value
+    
+    # 1. DYNAMIC BASELINES (Fixing the hardcoded fraud)
+    max_possible_fuel = np.sum(Q_fuel_raw)
+    max_possible_time = np.sum(Q_time_raw)
+    reference_point = (max_possible_fuel * 1.1, max_possible_time * 1.1)
+    
+    classical_baseline_cost = compute_greedy_baseline(Q_fuel_raw, num_vehicles)
+    
     print(f"Parsed {num_nodes} nodes. Padding to {reservoir_size}-qubit hardware topology.")
     
     # Pad to match the offline-trained reservoir
@@ -106,7 +131,5 @@ if __name__ == "__main__":
     
     run_qoblib_benchmark(
         filepath=benchmark_file, 
-        reference_point=(1000.0, 1000.0), 
-        classical_baseline_cost=500.0, # Example baseline
         reservoir_size=27
     )

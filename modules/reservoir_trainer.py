@@ -2,6 +2,7 @@ import numpy as np
 from qiskit import QuantumCircuit
 from qiskit.circuit import ParameterVector
 from scipy.optimize import minimize
+from qiskit.quantum_info import Statevector, SparsePauliOp
 
 def build_parameterized_reservoir(num_qubits: int, layers: int = 2) -> QuantumCircuit:
     """
@@ -30,28 +31,48 @@ def build_parameterized_reservoir(num_qubits: int, layers: int = 2) -> QuantumCi
 
 def train_reservoir_offline(num_qubits: int, layers: int = 2) -> np.ndarray:
     """
-    Simulates the reservoir classically to find the optimal fixed parameters.
-    (This runs ONCE, offline, on a small number of qubits).
+    Optimizes the fixed parameters to maximize the reservoir's expressivity
+    (output variance across different logistics input states).
     """
     qc = build_parameterized_reservoir(num_qubits, layers)
+    rng = np.random.default_rng(42)
     
-    def cost_function(params):
-        # Bind current parameters to the circuit
+    # Generate 5 random input states simulating different logistics graphs
+    input_circuits = []
+    for _ in range(5):
+        circ = QuantumCircuit(num_qubits)
+        for i in range(num_qubits):
+            circ.rz(rng.uniform(0, 2*np.pi), i)
+        input_circuits.append(circ)
+        
+    # Define observables (Z expectations for each qubit)
+    observables = []
+    for i in range(num_qubits):
+        pauli_str = ['I'] * num_qubits
+        pauli_str[num_qubits - 1 - i] = 'Z'
+        observables.append(SparsePauliOp("".join(pauli_str)))
+        
+    def expressivity_cost(params):
         bound_qc = qc.assign_parameters(params)
+        all_expectations = []
         
-        # NOTE: In production, insert your Statevector simulation here
-        # to evaluate the variance/expressivity of the reservoir output.
-        # For this architectural blueprint, we simulate a dummy cost
-        # that mimics a converged optimization landscape.
-        dummy_cost = np.sum(np.sin(params)**2) - 0.5 * np.sum(np.cos(params))
-        return dummy_cost
+        # Evaluate how the reservoir scatters the different inputs
+        for in_circ in input_circuits:
+            full_circ = in_circ.compose(bound_qc)
+            sv = Statevector(full_circ)
+            exp_vals = [np.real(sv.expectation_value(op)) for op in observables]
+            all_expectations.append(exp_vals)
+            
+        # True Expressivity: Maximize the variance of outputs
+        # We return the negative sum because scipy minimizes
+        variance = np.var(all_expectations, axis=0)
+        return -np.sum(variance)
         
-    # Initialize random starting parameters
-    initial_params = np.random.uniform(0, 2 * np.pi, num_qubits * layers)
+    initial_params = rng.uniform(0, 2 * np.pi, num_qubits * layers)
+    print("Starting rigorous expressivity training (Maximizing variance)...")
     
-    # Run classical optimization (COBYLA is standard for QAOA/VQE pre-training)
-    print(f"Starting offline reservoir training (Classical Simulation) for {num_qubits} qubits...")
-    result = minimize(cost_function, initial_params, method='COBYLA', options={'maxiter': 100})
+    # Run optimization
+    result = minimize(expressivity_cost, initial_params, method='COBYLA', options={'maxiter': 100})
     
-    print(f"Training Complete. Optimal parameters found.")
+    print(f"Training Complete. Expressivity score: {-result.fun:.4f}")
     return result.x
