@@ -1,5 +1,46 @@
 # Q-Fleet: Quantum Reservoir VRP Backend
 
+## Quick Start & Environment Setup
+
+**1. Clone the repository and install dependencies**
+
+```bash
+git clone https://github.com/godly-raam/Quantum_QRC.git
+cd Quantum_QRC
+pip install -r requirements.txt
+```
+
+**2. Download the QOBLIB Benchmark Data**
+
+Create the data directory and download the VRP instances:
+
+```bash
+mkdir -p data/QOBLIB/09-routing/instances
+# Place the XSH-n20-k4-01.vrp dataset into this folder
+```
+
+**3. Generate the Offline Quantum Weights (Crucial)**
+
+Before starting the API, you must pre-train and lock the reservoir dynamics:
+
+```bash
+python scripts/run_offline_training.py
+```
+
+**4. Start the Redis Server**
+
+The API requires Redis for real-time state management:
+
+```bash
+docker run -p 6379:6379 redis
+```
+
+**5. Start the FastAPI Backend**
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
 This project is the backend API for Q-Fleet, a revolutionary quantum-classical hybrid system for solving the Vehicle Routing Problem (VRP).
 
 Its core innovation is the use of **Quantum Reservoir Computing (QRC)** to provide **real-time, sub-second adaptation** to dynamic events like traffic jams and priority deliveries, without needing to re-run a slow optimization.

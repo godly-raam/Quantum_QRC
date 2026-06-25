@@ -12,7 +12,6 @@ Authors: Entangle Minds Team
 import numpy as np
 import logging
 from typing import List, Tuple, Dict, Any, Optional
-import networkx as nx
 from dataclasses import dataclass
 from scipy.stats import pearsonr
 from qiskit import QuantumCircuit
@@ -745,6 +744,7 @@ def generate_synthetic_training_data(n_instances: int = 30) -> List[Dict]:
     logger.info(f"Generating {n_instances} training instances...")
     
     training_data = []
+    rng = np.random.default_rng(42)
     
     data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'QOBLIB', '09-routing', 'instances')
     vrp_files = []
@@ -770,10 +770,10 @@ def generate_synthetic_training_data(n_instances: int = 30) -> List[Dict]:
                 continue
         else:
             # Random VRP instance
-            n_locs = np.random.randint(5, 8)
-            n_vehs = np.random.randint(2, 4)
+            n_locs = rng.integers(5, 8)
+            n_vehs = rng.integers(2, 4)
             
-            coords = np.random.randn(n_locs, 2) * 0.1 + [16.5, 80.5]
+            coords = rng.standard_normal((n_locs, 2)) * 0.1 + [16.5, 80.5]
             dist_matrix = np.zeros((n_locs, n_locs))
             
             for ii in range(n_locs):
@@ -782,7 +782,7 @@ def generate_synthetic_training_data(n_instances: int = 30) -> List[Dict]:
                     dist_matrix[ii, jj] = dist_matrix[jj, ii] = d
             
             # Random traffic conditions
-            traffic_mult = np.random.uniform(1.0, 2.0, (n_locs, n_locs))
+            traffic_mult = rng.uniform(1.0, 2.0, (n_locs, n_locs))
             np.fill_diagonal(traffic_mult, 1.0)
         
         # Generate "optimal" routes (greedy for training)
