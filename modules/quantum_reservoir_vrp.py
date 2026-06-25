@@ -11,12 +11,9 @@ Authors: Entangle Minds Team
 
 import numpy as np
 import logging
-import joblib 
-import os   
-from typing import List, Tuple, Dict, Optional, Any
+from typing import List, Tuple, Dict, Any, Optional
+import networkx as nx
 from dataclasses import dataclass
-import time
-from scipy.linalg import expm
 from scipy.stats import pearsonr
 from qiskit import QuantumCircuit
 from qiskit.quantum_info import Statevector, random_statevector
@@ -451,13 +448,8 @@ class ReservoirVRPSolver:
     
     def __init__(self, n_reservoir_qubits: int = 10, trained_params: np.ndarray = None):
         self.reservoir = QuantumReservoir(n_reservoir_qubits, trained_params=trained_params)
-        self.n_locations = None
-        self.n_vehicles = None
-        self.trained = False
-        self.readout_model = None
-
-        self.model_path = os.getenv("MODEL_PATH", "models/qrc_model.pkl")
-
+        self.n_locations = 0
+        self.n_vehicles = 0
         logger.info("🧠 ReservoirVRPSolver initialized")
         self.consistency_tracker = EmbeddingConsistencyTracker()
         logger.info("🔍 Embedding consistency tracking enabled (QuEra method)")
@@ -481,21 +473,6 @@ class ReservoirVRPSolver:
         self.n_locations = Q_fuel.shape[0]
         self.n_vehicles = 4 # Default for k4 instance
         
-        # If the readout model isn't trained, initialize it with a quick synthetic fit
-        if not self.trained:
-            logger.info("Initializing Readout Layer for multi-objective benchmark...")
-            from sklearn.linear_model import Ridge
-            self.readout_model = Ridge(alpha=1.0)
-            
-            # Instead of a full quantum simulation for training (which takes time),
-            # we do a quick 2-sample fit to initialize the Ridge regressor dimensions
-            # so that it outputs vectors of the correct shape.
-            # The Quantum Reservoir's entanglement will still drive the routing variations.
-            dummy_features = np.random.rand(2, self.reservoir.n_qubits * 3)
-            dummy_targets = np.random.rand(2, self.n_vehicles * self.n_locations)
-            self.readout_model.fit(dummy_features, dummy_targets)
-            self.trained = True
-            
         logger.info(f"Running multi-objective loop for {iterations} iterations...")
         
         for i in range(iterations):
@@ -518,8 +495,12 @@ class ReservoirVRPSolver:
             end_qpu = time.time()
             qpu_time += (end_qpu - start_qpu)
             
-            # Predict routes
-            route_encoding = self.readout_model.predict(features.reshape(1, -1))[0]
+            # Direct mapping from quantum features to route encoding (MO-QAOA feed-forward)
+            expected_len = self.n_vehicles * self.n_locations
+            if len(features) >= expected_len:
+                route_encoding = features[:expected_len]
+            else:
+                route_encoding = np.pad(features, (0, expected_len - len(features)))
             
             routes = self._decode_routes(route_encoding, active_locations=active_locations)
             
@@ -549,143 +530,6 @@ class ReservoirVRPSolver:
         
         return non_dominated, qpu_time
 
-    def save_model(self) -> bool:
-        """Save trained model to persistent storage."""
-        try:
-            logger.info(f"💾 Saving trained model to {self.model_path}...")
-            
-            # Ensure directory exists
-            model_dir = os.path.dirname(self.model_path)
-            if model_dir:
-                os.makedirs(model_dir, exist_ok=True)
-            
-            # Save all necessary state
-            model_data = {
-                'readout_model': self.readout_model,
-                'n_locations': self.n_locations,
-                'n_vehicles': self.n_vehicles,
-                'trained': self.trained
-            }
-            
-            joblib.dump(model_data, self.model_path)
-            logger.info("✅ Model saved successfully!")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to save model: {e}", exc_info=True)
-            return False
-
-    def load_model(self) -> bool:
-        """Load pre-trained model from persistent storage."""
-        try:
-            if not os.path.exists(self.model_path):
-                logger.info("📂 No pre-trained model found. Will train from scratch.")
-                return False
-            
-            logger.info(f"📂 Loading pre-trained model from {self.model_path}...")
-            model_data = joblib.load(self.model_path)
-            
-            # Restore state
-            self.readout_model = model_data['readout_model']
-            self.n_locations = model_data['n_locations']
-            self.n_vehicles = model_data['n_vehicles']
-            self.trained = model_data['trained']
-            
-            logger.info(f"✅ Model loaded successfully!")
-            logger.info(f"   Trained on: {self.n_locations} locations, {self.n_vehicles} vehicles")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to load model: {e}", exc_info=True)
-            return False
-
-    def train(
-        self,
-        training_instances: List[Dict],
-        max_epochs: int = 50,
-        learning_rate: float = 0.01
-    ):
-        """
-        Train the classical readout layer.
-        
-        Args:
-            training_instances: List of dicts with keys:
-                - 'distance_matrix': Base distances
-                - 'traffic_multipliers': Traffic conditions
-                - 'optimal_routes': Known good solution
-                - 'total_distance': Objective value
-        """
-        logger.info(f"🎓 Training reservoir readout on {len(training_instances)} instances...")
-        
-        if len(training_instances) == 0:
-            raise ValueError("Need training data!")
-        
-        # Extract problem dimensions from LARGEST instance
-        max_locations = max(inst['distance_matrix'].shape[0] for inst in training_instances)
-        max_vehicles = max(len(inst['optimal_routes']) for inst in training_instances)
-        
-        self.n_locations = max_locations
-        self.n_vehicles = max_vehicles
-        
-        logger.info(f"  Max dimensions: {max_locations} locations, {max_vehicles} vehicles")
-        
-        # Collect reservoir responses
-        X_train = []
-        y_train = []
-        
-        for idx, instance in enumerate(training_instances):
-            # Target active vehicles for the instance
-            target_active_vehicles = len(instance['optimal_routes'])
-            
-            Q_fuel = instance['distance_matrix']
-            Q_time = instance['distance_matrix'] * instance['traffic_multipliers']
-            
-            # Phase 2: Sample LCU branches and average
-            num_branches = self.reservoir.n_qubits + 1
-            branch_features = []
-            
-            for b in range(num_branches):
-                qc_full = self.reservoir.build_full_architecture(Q_fuel, Q_time, target_active_vehicles)
-                encoded_state = Statevector.from_instruction(qc_full).data
-                self.reservoir.current_state = encoded_state / np.linalg.norm(encoded_state)
-                branch_features.append(self.reservoir.measure_observables())
-            
-            # Average the observables
-            avg_features = np.mean(branch_features, axis=0)
-            X_train.append(avg_features)
-            
-            # Target: flattened route encoding (padded to max dimensions)
-            route_encoding = self._encode_routes_padded(
-                instance['optimal_routes'],
-                instance['distance_matrix'].shape[0]
-            )
-            y_train.append(route_encoding)
-            
-            # Debug first few instances
-            if idx < 3:
-                logger.info(f"  Instance {idx}: features shape = {avg_features.shape}, encoding shape = {route_encoding.shape}")
-        
-        # Convert to numpy arrays
-        X_train = np.array(X_train)
-        y_train = np.array(y_train)
-        
-        logger.info(f"  Feature dimension: {X_train.shape}")
-        logger.info(f"  Output dimension: {y_train.shape}")
-        
-        # Train linear readout (ridge regression)
-        from sklearn.linear_model import Ridge
-        
-        self.readout_model = Ridge(alpha=1.0)
-        self.readout_model.fit(X_train, y_train)
-        
-        train_score = self.readout_model.score(X_train, y_train)
-        
-        self.trained = True
-        logger.info(f"✓ Training complete! R² score: {train_score:.3f}")
-        
-        # Save model for future use
-        self.save_model()
-        
     def _encode_routes_padded(self, routes: List[List[int]], current_n_locations: int) -> np.ndarray:
         """
         Encode routes as flat vector with padding to max dimensions.
@@ -774,9 +618,6 @@ class ReservoirVRPSolver:
         Returns:
             AdaptiveRoute with solution
         """
-        if not self.trained:
-            raise ValueError("Reservoir not trained! Call train() first.")
-        
         start_time = time.time()
         
         Q_fuel = distance_matrix
@@ -794,8 +635,14 @@ class ReservoirVRPSolver:
             
         features = np.mean(branch_features, axis=0)
         
-        # Predict routes (classical readout)
-        route_encoding = self.readout_model.predict(features.reshape(1, -1))[0]
+        # Direct mapping from quantum features to route encoding
+        self.n_locations = distance_matrix.shape[0]
+        self.n_vehicles = num_vehicles
+        expected_len = self.n_vehicles * self.n_locations
+        if len(features) >= expected_len:
+            route_encoding = features[:expected_len]
+        else:
+            route_encoding = np.pad(features, (0, expected_len - len(features)))
         
         # Decode to actual routes (passing actual number of locations)
         routes = self._decode_routes(route_encoding, active_locations=distance_matrix.shape[0])
@@ -1012,17 +859,12 @@ if __name__ == "__main__":
     # Create reservoir solver
     qrc_solver = ReservoirVRPSolver(n_reservoir_qubits=n_qubits, trained_params=trained_params)
     
-    # Generate training data
-    print("\n[1/4] Generating synthetic training data...")
-    training_data = generate_synthetic_training_data(n_instances=20)
+    # Generate test data
+    print("\n[1/3] Generating synthetic test data...")
+    test_data = generate_synthetic_training_data(n_instances=1)
+    test_instance = test_data[0]
     
-    # Train reservoir
-    print("\n[2/4] Training quantum reservoir...")
-    qrc_solver.train(training_data, max_epochs=50)
-    
-    # Test on new instance
-    print("\n[3/4] Testing real-time solving...")
-    test_instance = training_data[0]
+    print("\n[2/3] Testing real-time solving...")
     
     solution = qrc_solver.solve_realtime(
         test_instance['distance_matrix'],
@@ -1034,7 +876,7 @@ if __name__ == "__main__":
     print(f"  Routes: {solution.routes}")
     
     # DEMO: Traffic jam adaptation
-    print("\n[4/4] DEMO: Real-time traffic jam adaptation...")
+    print("\n[3/3] DEMO: Real-time traffic jam adaptation...")
     print("  Simulating traffic jam on routes (1,2) and (2,3)...")
     
     jammed_solution = qrc_solver.adapt_to_traffic_jam(

@@ -110,64 +110,14 @@ async def initialize_qrc_solver_async():
             n_qubits,
             trained_params
         )
-        
-        training_status['progress'] = 20
-        training_status['message'] = 'Checking for pre-trained model...'
-        
-        # Try to load existing model first
-        logger.info("🔍 Checking for pre-trained model...")
-        model_loaded = await loop.run_in_executor(None, qrc_solver.load_model)
-        
-        if model_loaded:
-            # Model loaded successfully - INSTANT READY!
-            training_status['status'] = 'ready'
-            training_status['progress'] = 100
-            training_status['message'] = 'QRC loaded from memory. Ready!'
-            logger.info("=" * 80)
-            logger.info("✅ PRE-TRAINED MODEL LOADED - SYSTEM READY IN <1 SECOND!")
-            logger.info("=" * 80)
-            return  # EXIT - No training needed!
-        
-        # If no model found, train from scratch (first time only)
-        logger.info("=" * 80)
-        logger.info("⚠️  NO MODEL FOUND - STARTING FIRST-TIME TRAINING")
-        logger.info("    This will take ~10-15 minutes but only happens ONCE")
-        logger.info("    Future startups will be instant!")
-        logger.info("=" * 80)
-        
-        training_status['status'] = 'training'
-        training_status['progress'] = 30
-        training_status['message'] = 'First-time setup: Generating training data...'
-        
-        training_instances = int(os.getenv("QRC_TRAINING_INSTANCES", "10"))
-        
-        # Generate training data in thread pool
-        training_data = await loop.run_in_executor(
-            None,
-            generate_synthetic_training_data,
-            training_instances
-        )
-        
-        training_status['progress'] = 60
-        training_status['message'] = f'First-time setup: Training on {training_instances} instances (this takes time)...'
-        
-        # Train in thread pool (this is the slow part - only happens once!)
-        await loop.run_in_executor(
-            None,
-            qrc_solver.train,
-            training_data,
-            20  # Reduced epochs for faster first train
-        )
-        
+        # System is instantly ready via MO-QAOA parameter transfer
         training_status['status'] = 'ready'
         training_status['progress'] = 100
-        training_status['message'] = 'QRC trained and saved! Ready for instant future startups!'
-        
+        training_status['message'] = 'QRC locked parameters loaded. Ready!'
         logger.info("=" * 80)
-        logger.info("✅ FIRST-TIME TRAINING COMPLETE!")
-        logger.info("   Model saved to persistent storage")
-        logger.info("   Future startups will load in <1 second")
+        logger.info("✅ PRE-TRAINED RESERVOIR LOCKED - SYSTEM READY IN <1 SECOND!")
         logger.info("=" * 80)
+        return  # EXIT - No training needed!
         
     except Exception as e:
         logger.error(f"❌ Initialization failed: {e}", exc_info=True)
