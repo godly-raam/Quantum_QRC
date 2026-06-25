@@ -98,7 +98,7 @@ async def initialize_qrc_solver_async():
         weights_path = os.path.join(os.path.dirname(__file__), "weights", f"locked_reservoir_params_{n_qubits}q.npy")
         trained_params = None
         if os.path.exists(weights_path):
-            trained_params = np.load(weights_path)
+            trained_params = np.load(weights_path, allow_pickle=False)
             logger.info(f"Loaded Phase 3 locked parameters from {weights_path}")
         else:
             logger.warning(f"No offline parameters found at {weights_path}. Running with random/unlocked parameters.")
@@ -148,10 +148,10 @@ class VrpProblem(BaseModel):
     reps: int = Field(4, ge=1, le=6, description="QAOA depth (1-6)")
     use_qrc: bool = Field(False, description="Use Quantum Reservoir Computing")
     # NEW: Optional custom coordinates
-    custom_coordinates: Optional[List[List[float]]] = Field(None, description="List of [lat, lon] points. First is Depot.")
+    custom_coordinates: Optional[List[List[float]]] = Field(None, max_length=20, description="List of [lat, lon] points. First is Depot.")
 
 class VrpResponse(BaseModel):
-    problem_id: str
+    problem_id: uuid.UUID
     routes: list
     distances: list
     coordinates: list
@@ -162,12 +162,12 @@ class VrpResponse(BaseModel):
     notes: str
 
 class TrafficJamEvent(BaseModel):
-    problem_id: str
+    problem_id: uuid.UUID
     jam_locations: List[List[int]] = Field(..., description="List of [from, to] location pairs experiencing traffic")
     jam_severity: float = Field(2.5, ge=1.0, le=5.0, description="Traffic severity multiplier")
 
 class PriorityDeliveryEvent(BaseModel):
-    problem_id: str
+    problem_id: uuid.UUID
     priority_location: int = Field(..., ge=1, description="New urgent delivery location index")
     priority_level: int = Field(1, ge=1, le=3, description="Priority level")
 
@@ -309,11 +309,9 @@ async def optimize_routes(problem: VrpProblem):
         
         # Check QRC compatibility
         if problem.use_qrc and qrc_solver and qrc_solver.trained:
-            if problem.num_locations + 1 > qrc_solver.n_locations:
+            n_locations_local = distance_matrix.shape[0] - 1
+            if n_locations_local > qrc_solver.reservoir.n_qubits:
                 logger.warning(f"Problem too large for QRC. Using QAOA.")
-                problem.use_qrc = False
-            elif problem.num_vehicles > qrc_solver.n_vehicles:
-                logger.warning(f"Too many vehicles for QRC. Using QAOA.")
                 problem.use_qrc = False
         
         # Try QRC if compatible
@@ -419,6 +417,10 @@ def handle_traffic_jam(event: TrafficJamEvent):
     try:
         start_time = time.time()
         
+        max_idx = len(distance_matrix) - 1
+        if any(i > max_idx or j > max_idx for i, j in event.jam_locations):
+            raise HTTPException(status_code=400, detail="Jam location out of bounds.")
+        
         adapted_solution = qrc_solver.adapt_to_traffic_jam(
             current_routes,
             distance_matrix,
@@ -489,6 +491,10 @@ def handle_priority_delivery(event: PriorityDeliveryEvent):
     
     try:
         start_time = time.time()
+        
+        max_idx = len(distance_matrix) - 1
+        if event.priority_location > max_idx:
+            raise HTTPException(status_code=400, detail="Priority location out of bounds.")
         
         adapted_solution = qrc_solver.adapt_to_priority_delivery(
             current_routes,

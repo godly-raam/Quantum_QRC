@@ -830,7 +830,7 @@ if __name__ == "__main__":
     trained_params = None
     weights_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "weights", f"locked_reservoir_params_{n_qubits}q.npy")
     if os.path.exists(weights_path):
-        trained_params = np.load(weights_path)
+        trained_params = np.load(weights_path, allow_pickle=False)
         print(f"Loaded Phase 3 locked parameters from {weights_path}")
         
     # Create reservoir solver

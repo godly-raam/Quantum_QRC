@@ -29,7 +29,8 @@ def sample_lcu_branch(num_qubits: int, target_k: int, gamma: float = 1.0) -> flo
     probabilities = magnitudes / gamma_cost
     
     # Classically sample a branch j based on the LCU probabilities
-    sampled_j = np.random.choice(range(m + 1), p=probabilities)
+    rng = np.random.default_rng(42)
+    sampled_j = rng.choice(range(m + 1), p=probabilities)
     
     return theta_vals[sampled_j]
 
