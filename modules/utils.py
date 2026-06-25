@@ -52,10 +52,11 @@ def generate_distance_matrix(
     """
     Generate VRP instance with REAL road distances.
     """
-    np.random.seed(seed)
+    # Create a local, isolated generator
+    rng = np.random.default_rng(seed)
     
     # Generate coordinates around center (Vijayawada)
-    coords = np.random.randn(num_locations, 2) * spread + center
+    coords = rng.standard_normal((num_locations, 2)) * spread + center
     
     # 1. Try to get REAL road distances
     logger.info("🌍 Fetching real road distances from OSRM...")
@@ -193,7 +194,8 @@ def format_solution_response(
 def generate_traffic_scenario(
     distance_matrix: np.ndarray,
     jam_probability: float = 0.2,
-    severity_range: Tuple[float, float] = (1.5, 3.0)
+    severity_range: Tuple[float, float] = (1.5, 3.0),
+    seed: int = 42
 ) -> np.ndarray:
     """
     Generate random traffic scenario for testing.
@@ -202,17 +204,21 @@ def generate_traffic_scenario(
         distance_matrix: Base distance matrix
         jam_probability: Probability of traffic on each route
         severity_range: (min, max) traffic multiplier
+        seed: Random seed for deterministic generation
     
     Returns:
         Traffic multiplier matrix
     """
+    # FIX: Create a local generator
+    rng = np.random.default_rng(seed)
+    
     n = distance_matrix.shape[0]
     traffic = np.ones((n, n))
     
     for i in range(n):
         for j in range(i+1, n):
-            if np.random.random() < jam_probability:
-                severity = np.random.uniform(*severity_range)
+            if rng.random() < jam_probability:
+                severity = rng.uniform(*severity_range)
                 traffic[i, j] = traffic[j, i] = severity
     
     return traffic

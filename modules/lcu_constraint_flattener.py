@@ -1,7 +1,7 @@
 import numpy as np
 from qiskit import QuantumCircuit
 
-def sample_lcu_branch(num_qubits: int, target_k: int, gamma: float = 1.0) -> float:
+def sample_lcu_branch(num_qubits: int, target_k: int, gamma: float = 1.0, rng: np.random.Generator = None) -> float:
     """
     Computes the discrete Fourier coefficients for a quadratic penalty
     f(x) = (1^T x - k)^2 and samples a single LCU branch angle (theta_j).
@@ -29,7 +29,8 @@ def sample_lcu_branch(num_qubits: int, target_k: int, gamma: float = 1.0) -> flo
     probabilities = magnitudes / gamma_cost
     
     # Classically sample a branch j based on the LCU probabilities
-    rng = np.random.default_rng(42)
+    if rng is None:
+        rng = np.random.default_rng()
     sampled_j = rng.choice(range(m + 1), p=probabilities)
     
     return theta_vals[sampled_j]

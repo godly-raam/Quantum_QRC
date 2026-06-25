@@ -343,7 +343,7 @@ class QuantumReservoir:
         
         # 2. LCU Constraint Layer (Phase 2)
         # We sample a random theta branch for the cardinality constraint
-        sampled_theta = sample_lcu_branch(self.n_qubits, target_active_vehicles)
+        sampled_theta = sample_lcu_branch(self.n_qubits, target_active_vehicles, rng=self.rng)
         qc_constraint = build_lcu_constraint_layer(self.n_qubits, sampled_theta)
         
         # 3. Reservoir Dynamics
