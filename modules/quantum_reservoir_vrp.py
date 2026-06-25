@@ -488,7 +488,7 @@ class ReservoirVRPSolver:
             
             if self.reservoir.n_qubits > 20:
                 # OOM prevention: Mocking the feature vector for 27-qubits as classical statevector sim is too expensive
-                features = np.random.rand(self.reservoir.n_qubits * 3) * 2 - 1
+                features = self.reservoir.rng.random(self.reservoir.n_qubits * 3) * 2 - 1
             else:
                 encoded_state = Statevector.from_instruction(qc_full).data
                 self.reservoir.current_state = encoded_state / np.linalg.norm(encoded_state)
