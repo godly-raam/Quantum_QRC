@@ -18,10 +18,10 @@ Because we only require the classical readout of the reservoir (sampling high-qu
 * **Decoherence Risk:** Minimal. State fidelity is preserved for the non-linear feature extraction in the reservoir layer.
 
 ## 3. The Algorithmic Trade-off: Polynomial Sampling
-The thermodynamic cost of flattening an $\mathcal{O}(N^2)$ depth coherent circuit into an $\mathcal{O}(1)$ single-qubit layer is shifted to the classical runtime. 
+The architecture replaces the $\mathcal{O}(N^2)$ quantum circuit-depth bottleneck of the dense penalty construction with an $\mathcal{O}(1)$ layer of single-qubit rotations. The corresponding cost is shifted to classical runtime.
 
-To approximate the penalty, the classical readout layer must sample discrete branches of the Fourier expansion. For a cardinality constraint on $N$ variables, the LCU norm (sampling overhead) is strictly bounded by $\Gamma \le N + 1$.
+To approximate the penalty, the classical readout layer samples discrete branches of the Fourier expansion. For a cardinality constraint on $N$ variables, this introduces a tractable $\mathcal{O}(N)$ classical sampling overhead, with LCU norm $\Gamma \le N + 1$.
 * **Sampling Complexity:** $\mathcal{O}(N)$.
 
 ## 4. Conclusion
-The proposed QRC Logistics Engine successfully trades exponential quantum decoherence for a highly tractable $\mathcal{O}(N)$ polynomial classical sampling overhead. This scaling advantage proves that Fourier-flattened QRC architectures are strictly superior to standard QAOA constraint models for near-term logistics optimization.
+Fourier-flattened QRC constraint layers offer a rigorous depth-versus-sampling trade-off: they avoid dense, topology-sensitive quantum entangling layers by accepting a tractable $\mathcal{O}(N)$ classical sampling overhead. Whether this trade-off is beneficial depends on the target hardware, noise characteristics, and real-time routing requirements.
