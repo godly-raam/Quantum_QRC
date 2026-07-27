@@ -1,6 +1,6 @@
 # Q-Fleet: Quantum Reservoir VRP Backend
 
-Quantum Reservoir Computing (QRC) deliberately trades single-shot routing optimality for a 1000× improvement in real-time adaptation latency, acting as a sub-second dynamic re-planner under a classical solver’s shadow.
+Quantum Reservoir Computing (QRC) trades solution quality for sub-second re-adaptation latency versus full re-optimization. It is intended as a dynamic re-planner that operates alongside, rather than replaces, a classical routing solver.
 
 ## Quick Start & Environment Setup
 
@@ -43,7 +43,9 @@ docker run -p 6379:6379 redis
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-This project is the backend API for Q-Fleet, a quantum-classical hybrid system for the Vehicle Routing Problem (VRP). QRC provides real-time, sub-second adaptation to dynamic events such as traffic jams and priority deliveries while a classical solver remains responsible for full optimization.
+This project is the backend API for Q-Fleet, a quantum-classical system for the Vehicle Routing Problem (VRP). Its core claim is operational rather than an optimality claim: QRC trades solution quality for sub-second re-adaptation latency versus a full re-optimization, while a classical solver remains responsible for full optimization.
+
+[QOBLIB's Vehicle Routing benchmark](https://github.com/ZIB-AOPT/QOBLIB/tree/main/09-routing) flags VRP instances of this scale as classically solvable to optimality today. Accordingly, this benchmark should be read as a stress test of real-time adaptation latency, not as a claim of quantum advantage.
 
 This approach is informed by research into quantum reservoirs, including work by QuEra Computing (arXiv:2407.02553v1).
 
