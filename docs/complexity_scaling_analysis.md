@@ -18,10 +18,13 @@ Because we only require the classical readout of the reservoir (sampling high-qu
 * **Decoherence Risk:** Minimal. State fidelity is preserved for the non-linear feature extraction in the reservoir layer.
 
 ## 3. The Algorithmic Trade-off: Polynomial Sampling
-The architecture replaces the $\mathcal{O}(N^2)$ quantum circuit-depth bottleneck of the dense penalty construction with an $\mathcal{O}(1)$ layer of single-qubit rotations. The corresponding cost is shifted to classical runtime.
+The proposed construction trades the $\mathcal{O}(N^2)$ circuit-depth bottleneck of a dense penalty construction for an $\mathcal{O}(1)$ layer of single-qubit rotations. Its cost is shifted to classical runtime: approximating the penalty requires sampling discrete branches of the Fourier expansion.
 
-To approximate the penalty, the classical readout layer samples discrete branches of the Fourier expansion. For a cardinality constraint on $N$ variables, this introduces a tractable $\mathcal{O}(N)$ classical sampling overhead, with LCU norm $\Gamma \le N + 1$.
-* **Sampling Complexity:** $\mathcal{O}(N)$.
+For a cardinality constraint on $N$ variables, the stated LCU norm is $\Gamma \le N + 1$, yielding an $\mathcal{O}(N)$ classical sampling overhead.
+* **Circuit-depth trade-off:** $\mathcal{O}(N^2) \rightarrow \mathcal{O}(1)$.
+* **Sampling overhead:** $\mathcal{O}(N)$, with $\Gamma \le N + 1$.
 
-## 4. Conclusion
-Fourier-flattened QRC constraint layers offer a rigorous depth-versus-sampling trade-off: they avoid dense, topology-sensitive quantum entangling layers by accepting a tractable $\mathcal{O}(N)$ classical sampling overhead. Whether this trade-off is beneficial depends on the target hardware, noise characteristics, and real-time routing requirements.
+## 4. Limitations and Future Work
+The asymptotic depth reduction does not establish a real wall-clock crossover. In particular, the point at which $\mathcal{O}(N)$ classical sampling beats $\mathcal{O}(N^2)$ routed quantum depth under realistic two-qubit gate error rates, compilation overheads, and hardware connectivity has not yet been established empirically. Measuring that crossover across devices and problem sizes is future work.
+
+The practical value of this trade-off depends on the target hardware, noise characteristics, classical sampling implementation, and real-time routing requirements.
