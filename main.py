@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 import numpy as np
 from modules import quantum_solver
 from modules.quantum_reservoir_vrp import ReservoirVRPSolver, generate_synthetic_training_data
+from modules.primal_integral import PrimalIntegralTracker
+from modules.utils import calculate_all_routes_distance
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -68,7 +70,7 @@ async def enhanced_cors_handler(request: Request, call_next):
         )
 
 # Global State
-qrc_solver = None
+qrc_solver: Optional[ReservoirVRPSolver] = None
 training_status = {
     'status': 'pending',  # pending, training, ready, failed
     'progress': 0,
@@ -163,7 +165,7 @@ class VrpResponse(BaseModel):
 
 class TrafficJamEvent(BaseModel):
     problem_id: uuid.UUID
-    jam_locations: List[List[int]] = Field(..., description="List of [from, to] location pairs experiencing traffic")
+    jam_locations: List[tuple[int, int]] = Field(..., description="List of [from, to] location pairs experiencing traffic")
     jam_severity: float = Field(2.5, ge=1.0, le=5.0, description="Traffic severity multiplier")
 
 class PriorityDeliveryEvent(BaseModel):
@@ -180,6 +182,7 @@ class AdaptationResponse(BaseModel):
     method: str
     event_type: str
     notes: str
+    primal_integral: Dict[str, Any]
 
 # Core Endpoints
 
@@ -402,7 +405,10 @@ def handle_traffic_jam(event: TrafficJamEvent):
             status_code=503,
             detail=f"QRC not ready yet. Status: {training_status['message']}"
         )
-    
+    solver = qrc_solver
+    if solver is None:
+        raise HTTPException(status_code=503, detail="QRC solver is not initialized")
+
     # Fetch state from Redis
     state_json = redis_client.get(f"problem:{event.problem_id}")
     if not state_json:
@@ -421,12 +427,30 @@ def handle_traffic_jam(event: TrafficJamEvent):
         if any(i > max_idx or j > max_idx for i, j in event.jam_locations):
             raise HTTPException(status_code=400, detail="Jam location out of bounds.")
         
-        adapted_solution = qrc_solver.adapt_to_traffic_jam(
+        # ReservoirVRPSolver evaluates this event against a fresh multiplier
+        # matrix containing the reported jams. Track the prior feasible route
+        # and adapted route against that same objective.
+        event_multipliers = np.ones_like(distance_matrix)
+        for i, j in event.jam_locations:
+            event_multipliers[i, j] = event.jam_severity
+            event_multipliers[j, i] = event.jam_severity
+        baseline_objective = calculate_all_routes_distance(
+            current_routes, distance_matrix, event_multipliers
+        )[1]
+        tracker = PrimalIntegralTracker(
+            reference_objective=baseline_objective,
+            reference_source="pre-adaptation feasible incumbent; external best-known objective unavailable",
+        )
+        tracker.record(baseline_objective, elapsed_seconds=0.0)
+
+        adapted_solution = solver.adapt_to_traffic_jam(
             current_routes,
             distance_matrix,
             jam_location_pairs=event.jam_locations,
             jam_severity=event.jam_severity
         )
+        tracker.record(float(adapted_solution.total_distance))
+        primal_integral = tracker.as_dict()
         
         # Convert routes to pure Python types (FIX for numpy serialization)
         routes = [[int(loc) for loc in route] for route in adapted_solution.routes]
@@ -439,6 +463,9 @@ def handle_traffic_jam(event: TrafficJamEvent):
         # Save back to Redis
         state['current_routes'] = routes
         state['traffic_multipliers'] = traffic_multipliers.tolist()
+        history = state.setdefault('adaptation_primal_integrals', [])
+        history.append({"event_type": "traffic_jam", "trace": primal_integral})
+        state['adaptation_primal_integrals'] = history[-100:]
         redis_client.setex(f"problem:{event.problem_id}", 3600, json.dumps(state))
         
         distances = []
@@ -461,7 +488,8 @@ def handle_traffic_jam(event: TrafficJamEvent):
             "adaptation_time": float(adaptation_time),  # Ensure float
             "method": "Quantum Reservoir Computing",
             "event_type": "traffic_jam",
-            "notes": f"Adapted in {adaptation_time:.3f}s"
+            "notes": f"Adapted in {adaptation_time:.3f}s",
+            "primal_integral": primal_integral
         }
         
     except Exception as e:
@@ -477,7 +505,10 @@ def handle_priority_delivery(event: PriorityDeliveryEvent):
             status_code=503,
             detail=f"QRC not ready yet. Status: {training_status['message']}"
         )
-    
+    solver = qrc_solver
+    if solver is None:
+        raise HTTPException(status_code=503, detail="QRC solver is not initialized")
+
     # Fetch state from Redis
     state_json = redis_client.get(f"problem:{event.problem_id}")
     if not state_json:
@@ -496,18 +527,37 @@ def handle_priority_delivery(event: PriorityDeliveryEvent):
         if event.priority_location > max_idx:
             raise HTTPException(status_code=400, detail="Priority location out of bounds.")
         
-        adapted_solution = qrc_solver.adapt_to_priority_delivery(
+        # Match ReservoirVRPSolver's priority objective before evaluating the
+        # incumbent, so both primal-integral samples share one cost function.
+        priority_multipliers = traffic_multipliers.copy()
+        priority_multipliers[:, event.priority_location] *= 0.5
+        priority_multipliers[event.priority_location, :] *= 0.5
+        baseline_objective = calculate_all_routes_distance(
+            current_routes, distance_matrix, priority_multipliers
+        )[1]
+        tracker = PrimalIntegralTracker(
+            reference_objective=baseline_objective,
+            reference_source="pre-adaptation feasible incumbent; external best-known objective unavailable",
+        )
+        tracker.record(baseline_objective, elapsed_seconds=0.0)
+
+        adapted_solution = solver.adapt_to_priority_delivery(
             current_routes,
             distance_matrix,
             event.priority_location,
             traffic_multipliers
         )
+        tracker.record(float(adapted_solution.total_distance))
+        primal_integral = tracker.as_dict()
         
         # Convert routes to pure Python types (FIX for numpy serialization)
         routes = [[int(loc) for loc in route] for route in adapted_solution.routes]
         
         # Save back to Redis
         state['current_routes'] = routes
+        history = state.setdefault('adaptation_primal_integrals', [])
+        history.append({"event_type": "priority_delivery", "trace": primal_integral})
+        state['adaptation_primal_integrals'] = history[-100:]
         redis_client.setex(f"problem:{event.problem_id}", 3600, json.dumps(state))
         
         distances = []
@@ -530,7 +580,8 @@ def handle_priority_delivery(event: PriorityDeliveryEvent):
             "adaptation_time": float(adaptation_time),  # Ensure float
             "method": "Quantum Reservoir Computing",
             "event_type": "priority_delivery",
-            "notes": f"Added priority delivery in {adaptation_time:.3f}s"
+            "notes": f"Added priority delivery in {adaptation_time:.3f}s",
+            "primal_integral": primal_integral
         }
         
     except Exception as e:
