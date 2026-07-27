@@ -4,7 +4,6 @@ Configuration settings for Q-Fleet QRC Backend
 """
 
 import os
-from typing import Optional
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):

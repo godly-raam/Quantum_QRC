@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import numpy as np
 from modules import quantum_solver
-from modules.quantum_reservoir_vrp import ReservoirVRPSolver, generate_synthetic_training_data
+from modules.quantum_reservoir_vrp import ReservoirVRPSolver
 from modules.primal_integral import PrimalIntegralTracker
 from modules.utils import calculate_all_routes_distance
 
@@ -84,7 +84,7 @@ async def initialize_qrc_solver_async():
     Load existing model or train only if needed.
     This makes startup instant after first training.
     """
-    global qrc_solver, training_status
+    global qrc_solver  # training_status is a mutable dict; direct mutation needs no global declaration
     
     try:
         training_status['status'] = 'initializing'
@@ -243,7 +243,7 @@ def qrc_status():
     }
 
 @app.options("/{path:path}")
-async def options_handler(path: str):
+async def options_handler(path: str):  # noqa: ARG001 – path is required by FastAPI routing but not used
     """Handle CORS preflight requests."""
     return JSONResponse(
         content={"message": "OK"},
@@ -271,6 +271,14 @@ async def optimize_routes(problem: VrpProblem):
         problem.use_qrc = False
     
     try:
+        # Pre-initialize variables for Pyright static analysis safety
+        routes: List[List[int]] = []
+        total_distance: float = 0.0
+        execution_time: float = 0.0
+        is_quantum: bool = False
+        method: str = ""
+        notes: str = ""
+
         # Use custom coordinates if provided
         if problem.custom_coordinates and len(problem.custom_coordinates) >= 2:
             logger.info(f"📍 Using {len(problem.custom_coordinates)} custom locations from user")
@@ -310,17 +318,17 @@ async def optimize_routes(problem: VrpProblem):
             
             traffic_multipliers = np.ones_like(distance_matrix)
         
-        # Check QRC compatibility
         if problem.use_qrc and qrc_solver and qrc_solver.trained:
             n_locations_local = distance_matrix.shape[0] - 1
             if n_locations_local > qrc_solver.reservoir.n_qubits:
-                logger.warning(f"Problem too large for QRC. Using QAOA.")
+                logger.warning("Problem too large for QRC. Using QAOA.")
                 problem.use_qrc = False
         
-        # Try QRC if compatible
+        # Run QRC or QAOA
+        qrc_success = False
+        start_time = time.time()
+        
         if problem.use_qrc and qrc_solver and qrc_solver.trained:
-            start_time = time.time()
-            
             try:
                 solution = qrc_solver.solve_realtime(
                     distance_matrix,
@@ -337,17 +345,15 @@ async def optimize_routes(problem: VrpProblem):
                 
                 if not routes or len(routes) == 0:
                     raise ValueError("QRC returned empty routes")
+                qrc_success = True
                 
             except Exception as qrc_error:
                 logger.error(f"QRC failed: {qrc_error}")
-                problem.use_qrc = False
+                qrc_success = False
         
-        # Use QAOA if QRC not used or failed
-        if not problem.use_qrc or not qrc_solver or not qrc_solver.trained:
+        if not qrc_success:
             logger.info("Using QAOA...")
-            start_time = time.time()
-            
-            routes, distances_qaoa, metrics = quantum_solver.solve_quantum_vrp(
+            routes, _, metrics = quantum_solver.solve_quantum_vrp(
                 distance_matrix,
                 problem.num_vehicles,
                 depot_node,
@@ -394,8 +400,8 @@ async def optimize_routes(problem: VrpProblem):
         }
         
     except Exception as e:
-        logger.error(f"Error in optimize_routes: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Optimization failed: {str(e)}")
+        logger.error("Error in optimize_routes: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Optimization failed: {str(e)}") from e
 
 @app.post("/api/traffic-jam", response_model=AdaptationResponse)
 def handle_traffic_jam(event: TrafficJamEvent):
@@ -493,8 +499,8 @@ def handle_traffic_jam(event: TrafficJamEvent):
         }
         
     except Exception as e:
-        logger.error(f"Traffic jam adaptation failed: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Adaptation failed: {str(e)}")
+        logger.error("Traffic jam adaptation failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Adaptation failed: {str(e)}") from e
 
 
 @app.post("/api/priority-delivery", response_model=AdaptationResponse)
@@ -585,8 +591,8 @@ def handle_priority_delivery(event: PriorityDeliveryEvent):
         }
         
     except Exception as e:
-        logger.error(f"Priority delivery adaptation failed: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Adaptation failed: {str(e)}")
+        logger.error("Priority delivery adaptation failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Adaptation failed: {str(e)}") from e
 
 @app.get("/api/current-state")
 def get_current_state(problem_id: str):
@@ -613,5 +619,5 @@ if __name__ == "__main__":
     print("Q-FLEET API v2.0: QUANTUM RESERVOIR COMPUTING EDITION")
     print("=" * 80)
     import uvicorn
-    port = int(os.getenv("PORT", 8000))
+    port = int(os.getenv("PORT", "8000"))  # os.getenv default must be str
     uvicorn.run(app, host="0.0.0.0", port=port)

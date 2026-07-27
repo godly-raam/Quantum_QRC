@@ -1,7 +1,6 @@
 # modules/quantum_solver.py - FIXED VERSION
 
 from qiskit_aer.primitives import Sampler
-from qiskit_aer import AerSimulator
 from qiskit_algorithms.minimum_eigensolvers import QAOA
 from qiskit_algorithms.optimizers import COBYLA, SPSA
 from qiskit_optimization.applications import VehicleRouting
@@ -77,8 +76,12 @@ def _create_classical_fallback(
     routing.SetArcCostEvaluatorOfAllVehicles(callback_index)
 
     search_parameters = pywrapcp.DefaultRoutingSearchParameters()
-    search_parameters.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
-    search_parameters.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+    search_parameters.first_solution_strategy = (  # pylint: disable=no-member
+        routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC  # pylint: disable=no-member
+    )
+    search_parameters.local_search_metaheuristic = (  # pylint: disable=no-member
+        routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH  # pylint: disable=no-member
+    )
     search_parameters.time_limit.FromSeconds(1)
 
     assignment = routing.SolveWithParameters(search_parameters)
@@ -164,13 +167,13 @@ def solve_quantum_vrp(
         # ============================================
         
         qaoa = QAOA(
-            sampler=sampler,
+            sampler=sampler,  # type: ignore
             optimizer=optimizer,
             reps=adjusted_reps,
             initial_point=np.random.uniform(0, 2 * np.pi, 2 * adjusted_reps)
         )
         
-        eigen_optimizer = MinimumEigenOptimizer(min_eigen_solver=qaoa)
+        eigen_optimizer = MinimumEigenOptimizer(min_eigen_solver=qaoa)  # type: ignore
         
         logger.info(f"Executing QAOA: {adjusted_reps} layers, {method_note}")
         result = eigen_optimizer.solve(qp)
@@ -190,7 +193,7 @@ def solve_quantum_vrp(
             formatted_routes = []
             for route in routes:
                 if isinstance(route, (list, tuple, np.ndarray)):
-                    formatted_route = [int(x) for x in route]
+                    formatted_route = [int(x) for x in route]  # type: ignore
                     if formatted_route:
                         formatted_routes.append(formatted_route)
             

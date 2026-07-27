@@ -13,7 +13,7 @@ def build_parameterized_reservoir(num_qubits: int, layers: int = 2) -> QuantumCi
     theta = ParameterVector('θ', length=num_qubits * layers)
     
     param_idx = 0
-    for layer in range(layers):
+    for _ in range(layers):  # layer index unused; _ signals intentionally discarded
         # Parametrized local rotations
         for i in range(num_qubits):
             qc.rx(theta[param_idx], i)

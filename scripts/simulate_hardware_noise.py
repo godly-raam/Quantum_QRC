@@ -20,7 +20,7 @@ from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
 from qiskit_aer import AerSimulator
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from modules.lcu_constraint_flattener import (
+from modules.lcu_constraint_flattener import (  # noqa: E402 # pylint: disable=wrong-import-position,import-error
     build_lcu_constraint_layer,
     sample_lcu_branch,
 )
@@ -70,7 +70,8 @@ def create_fake_kyiv_backend():
         ) from error
 
 
-def run_hardware_experiment():
+def run_hardware_experiment():  # pylint: disable=too-many-locals,too-many-statements
+    """Execute NISQ hardware noise resilience benchmark comparing QAOA and LCU."""
     print("Initializing IBM FakeKyiv Hardware Simulation...")
     num_qubits = 8
     target_k = 4
@@ -123,10 +124,12 @@ def run_hardware_experiment():
 
     print("\n--- Physical Hardware Metrics ---")
     print(
-        f"Standard QAOA Penalty -> Depth: {metrics['QAOA']['depth']}, CNOTs: {metrics['QAOA']['cnots']}"
+        f"Standard QAOA Penalty -> Depth: {metrics['QAOA']['depth']}, "
+        f"CNOTs: {metrics['QAOA']['cnots']}"
     )
     print(
-        f"Proposed LCU Penalty  -> Depth: {metrics['LCU']['depth']}, CNOTs: {metrics['LCU']['cnots']}"
+        f"Proposed LCU Penalty  -> Depth: {metrics['LCU']['depth']}, "
+        f"CNOTs: {metrics['LCU']['cnots']}"
     )
 
     # 4. Execute Ideal vs Noisy

@@ -21,12 +21,17 @@ from qiskit.quantum_info import Statevector
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(PROJECT_ROOT)
 
-from modules.quantum_reservoir_vrp import QuantumReservoir, ReservoirVRPSolver  # noqa: E402
-from modules.reservoir_trainer import train_reservoir_offline  # noqa: E402
+from modules.quantum_reservoir_vrp import (  # noqa: E402 # pylint: disable=wrong-import-position,import-error
+    QuantumReservoir,
+    ReservoirVRPSolver,
+)
+from modules.reservoir_trainer import (  # noqa: E402 # pylint: disable=wrong-import-position,import-error
+    train_reservoir_offline,
+)
 
 
 @dataclass
-class EchoStateNetwork:
+class EchoStateNetwork:  # pylint: disable=too-many-instance-attributes
     """Fixed ESN with N recurrent units and a 3N matched output feature vector."""
 
     size: int
@@ -46,9 +51,11 @@ class EchoStateNetwork:
         self.state = np.zeros(self.size)
 
     def reset(self) -> None:
+        """Reset reservoir hidden state to zero."""
         self.state.fill(0.0)
 
     def features(self, matrix: np.ndarray) -> np.ndarray:
+        """Compute feature vector from input cost matrix."""
         normalized = _normalise_matrix(matrix).ravel()
         self.state = np.tanh(self.input_weights @ normalized + self.recurrent_weights @ self.state)
         # Match QuantumReservoir.measure_observables()'s X/Y/Z feature count: 3N.
@@ -99,8 +106,11 @@ def _evaluate(
         features = feature_fn(distance_matrix)
         feature_rows.append(features)
         encoding_size = num_vehicles * distance_matrix.shape[0]
-        route_encoding = np.pad(features, (0, max(0, encoding_size - len(features))))[:encoding_size]
-        routes = decoder._decode_routes(route_encoding, num_vehicles, distance_matrix.shape[0])
+        padded = np.pad(features, (0, max(0, encoding_size - len(features))))
+        route_encoding = padded[:encoding_size]
+        routes = decoder._decode_routes(  # pylint: disable=protected-access
+            route_encoding, num_vehicles, distance_matrix.shape[0]
+        )
         costs.append(_route_cost(routes, distance_matrix))
 
     feature_matrix = np.vstack(feature_rows)
@@ -110,15 +120,22 @@ def _evaluate(
 
 
 def main() -> None:
+    """Run classical ESN vs quantum reservoir comparison benchmark."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--qubits", type=int, default=8, help="Reservoir/ESN unit count (default: 8)")
-    parser.add_argument("--instances", type=int, default=20, help="Number of synthetic routing instances")
-    parser.add_argument("--vehicles", type=int, default=4, help="Number of vehicles for the common decoder")
+    parser.add_argument(
+        "--qubits", type=int, default=8, help="Reservoir/ESN unit count (default: 8)"
+    )
+    parser.add_argument(
+        "--instances", type=int, default=20, help="Number of synthetic routing instances"
+    )
+    parser.add_argument(
+        "--vehicles", type=int, default=4, help="Number of vehicles for the common decoder"
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument(
         "--weights",
         default=None,
-        help="Path to locked quantum parameters; trains with reservoir_trainer if omitted or absent",
+        help="Path to locked quantum parameters; trains with reservoir_trainer if omitted",
     )
     args = parser.parse_args()
 
@@ -133,7 +150,10 @@ def main() -> None:
     if os.path.exists(weights_path):
         quantum_params = np.load(weights_path)
     else:
-        print("No locked quantum weights found; training with reservoir_trainer.train_reservoir_offline().")
+        print(
+            "No locked quantum weights found; "
+            "training with reservoir_trainer.train_reservoir_offline()."
+        )
         quantum_params = train_reservoir_offline(args.qubits)
 
     quantum_reservoir = QuantumReservoir(
@@ -178,7 +198,9 @@ def main() -> None:
             "mean_route_cost": classical_results[1],
             "route_cost_std": classical_results[2],
         },
-        "interpretation": "Both reservoirs use the same direct decoder; lower route cost is better.",
+        "interpretation": (
+            "Both reservoirs use the same direct decoder; lower route cost is better."
+        ),
     }
     print(json.dumps(report, indent=2, sort_keys=True))
 

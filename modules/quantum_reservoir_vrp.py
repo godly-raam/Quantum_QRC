@@ -11,13 +11,12 @@ Authors: Entangle Minds Team
 
 import numpy as np
 import logging
+import time
 from typing import List, Tuple, Dict, Any, Optional
 from dataclasses import dataclass
 from scipy.stats import pearsonr
 from qiskit import QuantumCircuit
-from qiskit.quantum_info import Statevector, random_statevector
-from qiskit_aer import AerSimulator
-from qiskit_aer.primitives import Sampler
+from qiskit.quantum_info import Statevector
 
 # Phase 1 & 2 Imports
 import sys
@@ -152,7 +151,8 @@ class EmbeddingConsistencyTracker:
             embeddings_reference = embeddings_reference.flatten()
         
         # Compute correlation
-        corr, _ = pearsonr(embeddings_actual, embeddings_reference)
+        res = pearsonr(embeddings_actual, embeddings_reference)
+        corr = float(res[0])  # type: ignore
         
         self.correlations.append(corr)
         self.batch_indices.append(batch_idx)
@@ -216,7 +216,7 @@ class QuantumReservoir:
         n_reservoir_qubits: int = 10,
         coupling_strength: float = 0.1,
         random_seed: int = 42,
-        trained_params: np.ndarray = None,
+        trained_params: Optional[np.ndarray] = None,
         reservoir_layers: int = 2
     ):
         """
@@ -350,7 +350,9 @@ class QuantumReservoir:
         qc_reservoir = self.build_reservoir_dynamics()
         
         # 4. Final Composition
-        full_circuit = qc_input.compose(qc_constraint).compose(qc_reservoir)
+        full_circuit = qc_input.copy()
+        full_circuit.compose(qc_constraint, inplace=True)
+        full_circuit.compose(qc_reservoir, inplace=True)
         return full_circuit
 
     
@@ -447,7 +449,7 @@ class ReservoirVRPSolver:
     3. Adaptation: Traffic jam → Update reservoir → New routes (< 1 second)
     """
     
-    def __init__(self, n_reservoir_qubits: int = 10, trained_params: np.ndarray = None):
+    def __init__(self, n_reservoir_qubits: int = 10, trained_params: Optional[np.ndarray] = None):
         self.reservoir = QuantumReservoir(n_reservoir_qubits, trained_params=trained_params)
         self.trained = trained_params is not None # FIX: Prevents 500 API crash
         self.consistency_tracker = EmbeddingConsistencyTracker()
@@ -553,7 +555,7 @@ class ReservoirVRPSolver:
         for loc in range(1, num_valid_locs):
             # Find the vehicle with the HIGHEST affinity for this location
             # This guarantees the location is assigned to exactly one vehicle.
-            best_vehicle = np.argmax(matrix[:, loc])
+            best_vehicle = int(np.argmax(matrix[:, loc]))
             
             # Assign location to that vehicle
             vehicle_stops[best_vehicle].append(loc)
@@ -740,6 +742,7 @@ def generate_synthetic_training_data(n_instances: int = 30) -> List[Dict]:
         has_parser = True
     except ImportError:
         has_parser = False
+        parse_vrp_instance = None
 
     logger.info(f"Generating {n_instances} training instances...")
     
@@ -752,7 +755,7 @@ def generate_synthetic_training_data(n_instances: int = 30) -> List[Dict]:
         vrp_files = glob.glob(os.path.join(data_dir, '*.vrp'))
     
     for i in range(n_instances):
-        if vrp_files and has_parser:
+        if vrp_files and has_parser and parse_vrp_instance is not None:
             # Use a real instance
             file_to_parse = vrp_files[i % len(vrp_files)]
             try:

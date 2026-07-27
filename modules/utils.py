@@ -6,13 +6,13 @@ Utility functions for Q-Fleet QRC Backend
 import numpy as np
 import requests
 import time
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-def get_osrm_distance_matrix(coords: np.ndarray) -> np.ndarray:
+def get_osrm_distance_matrix(coords: np.ndarray) -> Optional[np.ndarray]:
     """
     Fetch real-world road distances using the OSRM public API.
     
@@ -45,13 +45,15 @@ def get_osrm_distance_matrix(coords: np.ndarray) -> np.ndarray:
 
 def generate_distance_matrix(
     num_locations: int, 
-    center: list = [16.5, 80.5],
+    center: Optional[list] = None,
     spread: float = 0.05, # Reduced spread so points are closer (better for routing)
     seed: int = 123
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Generate VRP instance with REAL road distances.
     """
+    if center is None:
+        center = [16.5, 80.5]
     # Create a local, isolated generator
     rng = np.random.default_rng(seed)
     
@@ -78,7 +80,7 @@ def generate_distance_matrix(
 def calculate_route_distance(
     route: List[int],
     distance_matrix: np.ndarray,
-    traffic_multipliers: np.ndarray = None
+    traffic_multipliers: Optional[np.ndarray] = None
 ) -> float:
     """
     Calculate total distance for a single route.
@@ -106,7 +108,7 @@ def calculate_route_distance(
 def calculate_all_routes_distance(
     routes: List[List[int]],
     distance_matrix: np.ndarray,
-    traffic_multipliers: np.ndarray = None
+    traffic_multipliers: Optional[np.ndarray] = None
 ) -> Tuple[List[float], float]:
     """
     Calculate distances for all routes.
