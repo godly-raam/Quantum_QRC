@@ -66,23 +66,33 @@ This approach is informed by research into quantum reservoirs, including work by
 * `GET /`: Root endpoint with API status and documentation links.
 
 ## Benchmark Results
-We evaluated the Quantum Reservoir VRP backend against the standard QOBLIB datasets. The implementation dynamically pads standard routing topologies (e.g. 21 nodes) onto fixed 27-qubit hardware architectures. The 27-qubit row below demonstrates the scaling capability of the classical data-parsing and Pareto-filtering pipeline; it is not an active statevector calculation.
+The following disclosure follows [QOBLIB's submission schema](https://github.com/ZIB-AOPT/QOBLIB/blob/main/CONTRIBUTING.md). The recorded 27-qubit result uses the `> 20`-qubit random-vector bypass; it is **classical pipeline validation only — not a quantum result** and must not be used as a QRC-versus-classical quality comparison.
 
-```markdown
-### QOBLIB Submission Metrics ###
-| Metric | Value |
+| QOBLIB submission field | Recorded value |
 | :--- | :--- |
-| **Instance** | XSH-n20-k4-01.vrp |
-| **27-Qubit Topology (Classical Pipeline Validation Mock)** | 21 active nodes / 27-qubit topology |
-| **Pareto Front Size** | 2 non-dominated solutions |
-| **Hypervolume (HV)** | 386303839.2769 |
-| **Total Wall-Clock Time** | 0.4643 s |
-| **Isolated QPU Time** | 0.4422 s |
-| **Best Fuel Cost (QRC)** | 826.98 |
-| **Classical Baseline** | 345.23 |
-| **Absolute Optimality Gap** | 139.54% |
-```
+| **Identifier** | `XSH-n20-k4-01.vrp` |
+| **Submitter** | Entangle Minds Team |
+| **Date** | Not recorded |
+| **Reference** | This repository; `scripts/benchmark_qoblib.py` |
+| **Best objective value** | 826.98 — **Classical pipeline validation only — not a quantum result** |
+| **Optimality bound** | N/A; no bound was established |
+| **Modeling approach** | Fixed 27-feature reservoir/readout workflow with topology padding; **Classical pipeline validation only — not a quantum result** because the `> 20`-qubit random-vector bypass was used |
+| **# decision variables** | N/A; no QOBLIB optimization-model variable count was produced |
+| **# binary variables** | N/A |
+| **# integer variables** | N/A |
+| **# continuous variables** | N/A |
+| **# non-zero coefficients** | N/A; no QOBLIB model export was produced |
+| **Coefficient type/range** | N/A |
+| **Workflow description** | Parse and pad the instance, inject randomized feature vectors in place of a statevector, apply the classical readout and Pareto filtering; **Classical pipeline validation only — not a quantum result** |
+| **Algorithm type** | Stochastic (random-vector bypass) |
+| **# runs** | 1 recorded run |
+| **# feasible runs** | Not evaluated with the QOBLIB feasibility checker |
+| **# successful runs + success threshold ε** | N/A; no success criterion was evaluated |
+| **Hardware specification** | Not recorded; no QPU was used |
+| **Total runtime** | 0.4643 s |
+| **CPU runtime** | Not separately measured |
+| **GPU runtime** | N/A |
+| **QPU runtime** | N/A — no QPU execution; **Classical pipeline validation only — not a quantum result** |
+| **Other runtime** | Not separately measured |
 
-> **27-Qubit Topology Footnote — Classical Pipeline Validation Mock:** This row validates scaling in the classical data-parsing and Pareto-filtering pipeline, not an active statevector calculation.
->
 > **Note on Local Execution:** When simulating a reservoir > 20 qubits using a classical `Statevector`, memory overhead exceeds standard hardware capacities (e.g., $2^{27}$ requires tracking 134M amplitudes). To ensure local benchmark testing completes cleanly, a safety bypass activates for reservoirs `> 20` to inject randomized feature vectors. This bypass purely validates the classical optimization and Pareto filtering mechanics. It should be disabled when deploying the engine to a high-memory computing cluster or a native quantum device.
