@@ -6,6 +6,7 @@ from qiskit_algorithms.minimum_eigensolvers import QAOA
 from qiskit_algorithms.optimizers import COBYLA, SPSA
 from qiskit_optimization.applications import VehicleRouting
 from qiskit_optimization.algorithms import MinimumEigenOptimizer
+from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 import numpy as np
 import logging
 import time
@@ -45,21 +46,56 @@ def _calculate_route_distances(routes: List[List[int]], distance_matrix: np.ndar
             distances.append(0.0)
     return distances, float(total_distance)
 
-def _create_classical_fallback(distance_matrix: np.ndarray, num_vehicles: int, depot_node: int) -> List[List[int]]:
-    """Generate a simple greedy classical solution as fallback."""
-    logger.warning("Quantum solver failed. Using classical greedy fallback.")
-    num_locations = distance_matrix.shape[0] - 1
-    locations = list(range(1, num_locations + 1))
-    
-    # Simple round-robin assignment
-    routes = [[] for _ in range(num_vehicles)]
-    for loc in locations:
-        vehicle_idx = loc % num_vehicles
-        routes[vehicle_idx].append(loc)
-    
-    # Add depot at start and end of each route
-    final_routes = [[depot_node] + route + [depot_node] for route in routes if route]
-    return final_routes
+def _create_classical_fallback(
+    distance_matrix: np.ndarray, num_vehicles: int, depot_node: int
+) -> List[List[int]]:
+    """Solve the fallback VRP with OR-Tools' routing heuristic."""
+    if distance_matrix.ndim != 2 or distance_matrix.shape[0] != distance_matrix.shape[1]:
+        raise ValueError("distance_matrix must be square")
+    if not 0 <= depot_node < distance_matrix.shape[0]:
+        raise ValueError("depot_node is outside distance_matrix")
+    if num_vehicles < 1:
+        raise ValueError("num_vehicles must be positive")
+    if not np.isfinite(distance_matrix).all() or (distance_matrix < 0).any():
+        raise ValueError("distance_matrix must contain finite, non-negative costs")
+
+    logger.warning("Quantum solver failed. Using OR-Tools routing fallback.")
+    # OR-Tools uses integer arc costs; millimetre-equivalent scaling preserves
+    # the input's three decimal places while retaining the original matrix for reporting.
+    integer_costs = np.rint(distance_matrix * 1_000).astype(np.int64)
+    manager = pywrapcp.RoutingIndexManager(
+        distance_matrix.shape[0], num_vehicles, depot_node
+    )
+    routing = pywrapcp.RoutingModel(manager)
+
+    def distance_callback(from_index: int, to_index: int) -> int:
+        from_node = manager.IndexToNode(from_index)
+        to_node = manager.IndexToNode(to_index)
+        return int(integer_costs[from_node, to_node])
+
+    callback_index = routing.RegisterTransitCallback(distance_callback)
+    routing.SetArcCostEvaluatorOfAllVehicles(callback_index)
+
+    search_parameters = pywrapcp.DefaultRoutingSearchParameters()
+    search_parameters.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+    search_parameters.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+    search_parameters.time_limit.FromSeconds(1)
+
+    assignment = routing.SolveWithParameters(search_parameters)
+    if assignment is None:
+        raise RuntimeError("OR-Tools could not construct a feasible routing solution")
+
+    routes: List[List[int]] = []
+    for vehicle_id in range(num_vehicles):
+        index = routing.Start(vehicle_id)
+        route = [manager.IndexToNode(index)]
+        while not routing.IsEnd(index):
+            index = assignment.Value(routing.NextVar(index))
+            route.append(manager.IndexToNode(index))
+        if len(route) > 2:
+            routes.append(route)
+
+    return routes
 
 def solve_quantum_vrp(
     distance_matrix: np.ndarray, 

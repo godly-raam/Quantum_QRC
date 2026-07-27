@@ -23,6 +23,7 @@ qiskit-optimization>=0.7.0
 
 # Utilities
 python-dotenv==1.0.0
+ortools>=9.10.0
 
 # Testing (optional, for development)
 pytest==7.4.3
