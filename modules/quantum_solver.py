@@ -183,15 +183,15 @@ def solve_quantum_vrp(
         # ============================================
         
         try:
-            routes = vrp_problem.interpret(result)
-            logger.info(f"Raw quantum result: {routes}")
+            raw_routes = vrp_problem.interpret(result)
+            logger.info(f"Raw quantum result: {raw_routes}")
             
-            if not routes or not any(routes):
+            if not raw_routes or not any(raw_routes):
                 raise ValueError("Empty routes returned from quantum solver")
             
             # Format and validate routes
             formatted_routes = []
-            for route in routes:
+            for route in raw_routes:
                 if isinstance(route, (list, tuple, np.ndarray)):
                     formatted_route = [int(x) for x in route]  # type: ignore
                     if formatted_route:

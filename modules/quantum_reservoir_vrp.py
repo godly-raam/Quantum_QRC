@@ -12,7 +12,7 @@ Authors: Entangle Minds Team
 import numpy as np
 import logging
 import time
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, Callable
 from dataclasses import dataclass
 from scipy.stats import pearsonr
 from qiskit import QuantumCircuit
@@ -121,8 +121,8 @@ class EmbeddingConsistencyTracker:
     
     def __init__(self, batch_size: int = 50):
         self.batch_size = batch_size
-        self.correlations = []
-        self.batch_indices = []
+        self.correlations: List[float] = []
+        self.batch_indices: List[int] = []
     
     def compute_batch_correlation(
         self,
@@ -240,7 +240,7 @@ class QuantumReservoir:
         self.current_state = self._initialize_state()
         
         # Memory of past states (for time-series processing - unused in digital mode, kept for compatibility)
-        self.state_history = []
+        self.state_history: List[np.ndarray] = []
         
         logger.info(f"🌌 Quantum Reservoir initialized: {n_reservoir_qubits} qubits, "
                    f"Hilbert space dimension: {self.dim}")
@@ -547,7 +547,7 @@ class ReservoirVRPSolver:
         
         num_valid_locs = active_locations if active_locations is not None else n_locations
         
-        vehicle_stops = {v: [] for v in range(n_vehicles)}
+        vehicle_stops: Dict[int, List[int]] = {v: [] for v in range(n_vehicles)}
         
         # 4. Repair Step:
         # Iterate strictly through VALID customer locations (1 to N)
@@ -737,8 +737,10 @@ def generate_synthetic_training_data(n_instances: int = 30) -> List[Dict]:
     import glob
     import sys
     sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+    parse_vrp_instance: Optional[Callable[[str], Tuple[np.ndarray, np.ndarray]]] = None
+    has_parser: bool = False
     try:
-        from utils.vrp_parser import parse_vrp_instance
+        from utils.vrp_parser import parse_vrp_instance  # type: ignore
         has_parser = True
     except ImportError:
         has_parser = False
