@@ -173,8 +173,14 @@ def main() -> None:
         instances,
         args.vehicles,
     )
+
+    def esn_feature_fn(matrix: np.ndarray) -> np.ndarray:
+        """Reset ESN then compute features for a matrix."""
+        esn.reset()
+        return esn.features(matrix)
+
     classical_results = _evaluate(
-        lambda matrix: (esn.reset(), esn.features(matrix))[1],
+        esn_feature_fn,
         decoder,
         instances,
         args.vehicles,

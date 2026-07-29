@@ -4,6 +4,7 @@ import os
 import sys
 import time
 from typing import List, Tuple
+from operator import itemgetter
 
 import numpy as np
 
@@ -38,7 +39,7 @@ def calculate_2d_hypervolume(
     Assumes minimization for both objectives.
     """
     # Sort the front by the first objective (Fuel) ascending
-    sorted_front = sorted(pareto_front, key=lambda x: x[0])
+    sorted_front = sorted(pareto_front, key=itemgetter(0))
 
     hv = 0.0
     # The previous y-boundary is initially the reference point's y-value
@@ -64,10 +65,10 @@ def compute_greedy_baseline(q_fuel: np.ndarray, num_vehicles: int) -> float:
     for _ in range(num_vehicles):
         curr = 0
         while unvisited:
-            next_node = min(
-                unvisited,
-                key=lambda x, node=curr: q_fuel[node][x] if q_fuel[node][x] > 0 else float("inf"),
-            )
+            def _key_fn(x: int, node: int = curr) -> float:
+                return q_fuel[node][x] if q_fuel[node][x] > 0 else float("inf")
+
+            next_node = min(unvisited, key=_key_fn)
             total_cost += q_fuel[curr][next_node]
             unvisited.remove(next_node)
             curr = next_node
