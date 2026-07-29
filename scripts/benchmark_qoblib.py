@@ -3,7 +3,6 @@
 import os
 import sys
 import time
-from typing import List, Tuple
 from operator import itemgetter
 
 import numpy as np
@@ -11,8 +10,10 @@ import numpy as np
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.quantum_reservoir_vrp import ReservoirVRPSolver  # noqa: E402 # pylint: disable=wrong-import-position,import-error
-from utils.vrp_parser import parse_vrp_instance  # noqa: E402 # pylint: disable=wrong-import-position,import-error
+from modules.quantum_reservoir_vrp import (  # noqa: I001  # pylint: disable=wrong-import-position,import-error
+    ReservoirVRPSolver,
+)
+from utils.vrp_parser import parse_vrp_instance  # pylint: disable=wrong-import-position,import-error
 
 
 def pad_cost_matrix(matrix: np.ndarray, target_size: int) -> np.ndarray:
@@ -32,7 +33,7 @@ def pad_cost_matrix(matrix: np.ndarray, target_size: int) -> np.ndarray:
 
 
 def calculate_2d_hypervolume(
-    pareto_front: List[Tuple[float, float]], reference_point: Tuple[float, float]
+    pareto_front: list[tuple[float, float]], reference_point: tuple[float, float]
 ) -> float:
     """Calculates the Hypervolume (HV) for a 2D Pareto front (e.g., Fuel vs. Time).
 
@@ -106,12 +107,22 @@ def run_qoblib_benchmark(  # pylint: disable=too-many-locals,invalid-name
         "weights",
         f"locked_reservoir_params_{reservoir_size}q.npy",
     )
-    if not os.path.exists(locked_params_path):
-        raise FileNotFoundError(
-            f"Missing Phase 3 weights at {locked_params_path}. Run run_offline_training.py first."
-        )
-
-    locked_params = np.load(locked_params_path)
+    if os.path.exists(locked_params_path):
+        locked_params = np.load(locked_params_path, allow_pickle=False)
+        print(f"Loaded locked reservoir parameters from {locked_params_path}")
+    else:
+        locked_params = None
+        if reservoir_size > 20:
+            print(
+                "WARNING: Missing locked reservoir parameters at "
+                f"{locked_params_path}. This {reservoir_size}-qubit run will use "
+                "the documented random-vector bypass, not real quantum simulation."
+            )
+        else:
+            print(
+                "WARNING: Missing locked reservoir parameters at "
+                f"{locked_params_path}. Proceeding with the unbound reservoir circuit."
+            )
 
     # Initialize the solver wrapper with the FIXED reservoir size
     solver = ReservoirVRPSolver(n_reservoir_qubits=reservoir_size, trained_params=locked_params)

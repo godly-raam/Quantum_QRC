@@ -1,5 +1,15 @@
 # Q-Fleet: Quantum Reservoir VRP Backend
 
+## What this project actually shows
+
+This project investigates whether a fixed-parameter quantum reservoir provides a practical advantage over classical methods for vehicle routing problems (VRP) and related combinatorial optimization tasks. The results collected so far are mixed, and are reported here without adjustment:
+
+- On a QOBLIB VRP instance, the quantum-reservoir solver trades solution quality for adaptation speed (139% optimality gap vs. a classical baseline, but sub-second re-routing) — see the Benchmark Results section. QOBLIB's own authors note that current VRP instances in their library are solvable to classical optimality, so this result should be read as a latency benchmark, not a quantum-advantage claim.
+- On QOBLIB's Independent Set problem class (a class the benchmark's authors specifically flag as near-term quantum-amenable), we report a direct comparison against IBM's published QAOA baseline on the same instance — see the Independent Set Benchmark section.
+- A controlled ablation against a classical Echo State Network of matched size found the quantum reservoir performs worse on route cost at every size tested, and its expressivity collapses as qubit count grows — consistent with the barren plateau phenomenon — see the Classical Reservoir Ablation section.
+
+We have not yet found a result in which this architecture outperforms a matched classical baseline. We're documenting this openly because we think the negative results, and the process of catching and fixing the bugs that produced misleading earlier numbers, are as useful a record of the work as a positive result would have been. Real quantum-hardware execution (beyond classical simulation) is the next open step — see "Next Steps" below.
+
 Quantum Reservoir Computing (QRC) trades solution quality for sub-second re-adaptation latency versus full re-optimization. It is intended as a dynamic re-planner that operates alongside, rather than replaces, a classical routing solver.
 
 ## Quick Start & Environment Setup
@@ -96,3 +106,24 @@ The following disclosure follows [QOBLIB's submission schema](https://github.com
 | **Other runtime** | Not separately measured |
 
 > **Note on Local Execution:** When simulating a reservoir > 20 qubits using a classical `Statevector`, memory overhead exceeds standard hardware capacities (e.g., $2^{27}$ requires tracking 134M amplitudes). To ensure local benchmark testing completes cleanly, a safety bypass activates for reservoirs `> 20` to inject randomized feature vectors. This bypass purely validates the classical optimization and Pareto filtering mechanics. It should be disabled when deploying the engine to a high-memory computing cluster or a native quantum device.
+
+## Classical Reservoir Ablation
+
+Before attributing any result to "quantum" advantage, we tested whether the quantum reservoir provides any benefit over a classical Echo State Network (ESN) of matched feature dimension, using the same decoder and identical synthetic VRP instances (`scripts/benchmark_classical_reservoir.py`). This is not a claim of quantum advantage — it isolates whether the quantum feature map is doing anything a classical random projection can't.
+
+| Qubits | Classical ESN expressivity | Quantum reservoir expressivity | Classical route cost | Quantum route cost | Quantum vs. classical |
+|---|---|---|---|---|---|
+| 4 | 0.141 | 0.714 | 2.455 | 2.595 | +5.7% worse |
+| 8 | 0.830 | 0.976 | 4.826 | 5.491 | +13.8% worse |
+| 12 | 1.615 | 0.364 | 6.759 | 7.949 | +17.6% worse |
+| 16 | 4.321 | 0.178 | 8.845 | 9.759 | +10.3% worse |
+| 20 | 5.216 | 0.118 | 11.209 | 12.078 | +7.8% worse |
+
+**Findings, stated plainly:**
+
+- The quantum reservoir is **worse than the classical ESN on route cost at every size tested**, with no exceptions.
+- The classical ESN's expressivity grows smoothly and monotonically with size (0.141 → 5.216). The quantum reservoir's expressivity peaks around 8 qubits (0.976) and then **collapses monotonically** through 12, 16, and 20 qubits (down to 0.118) — even after fixing a training bug that had previously made this measurement meaningless (see commit 70e7efec).
+- This collapse pattern — expectation values of local observables concentrating toward zero as circuit width grows — is consistent with the **barren plateau phenomenon** documented in variational quantum circuits (McClean, J. R. et al. "Barren plateaus in quantum neural network training landscapes." *Nature Communications* 9, 4812 (2018)). We have not confirmed this is the specific mechanism at play here; it is offered as the most likely explanation consistent with the observed trend, not a proven diagnosis.
+- We do not currently have a result in which the quantum reservoir outperforms the matched classical baseline on either metric. This ablation should be read as an open problem for the project's core architecture, not a settled negative — barren-plateau mitigation strategies (e.g. problem-informed ansatz design, layerwise training, or restricting to shallower/more local entangling structure) are a concrete direction for future work rather than a dead end.
+
+Raw JSON outputs for all five runs are available via `scripts/benchmark_classical_reservoir.py --qubits {4,8,12,16,20} --instances 20 --vehicles 4`.
