@@ -1,18 +1,16 @@
-modules/utils.py
-"""
-Utility functions for Q-Fleet QRC Backend
-"""
+# modules/utils.py
+"""Utility functions for Q-Fleet QRC Backend."""
+
+import logging
+import time
 
 import numpy as np
 import requests
-import time
-from typing import List, Tuple, Dict, Optional
-import logging
 
 logger = logging.getLogger(__name__)
 
 
-def get_osrm_distance_matrix(coords: np.ndarray) -> Optional[np.ndarray]:
+def get_osrm_distance_matrix(coords: np.ndarray) -> np.ndarray | None:
     """
     Fetch real-world road distances using the OSRM public API.
 
@@ -38,17 +36,17 @@ def get_osrm_distance_matrix(coords: np.ndarray) -> Optional[np.ndarray]:
         else:
             logger.warning(f"OSRM API failed: {response.status_code}")
             return None
-    except Exception as e:
-        logger.warning(f"OSRM connection failed: {e}")
+    except (requests.RequestException, KeyError, TypeError, ValueError) as error:
+        logger.warning(f"OSRM connection failed: {error}")
         return None
 
 
 def generate_distance_matrix(
     num_locations: int,
-    center: Optional[list] = None,
-    spread: float = 0.05, # Reduced spread so points are closer (better for routing)
-    seed: int = 123
-) -> Tuple[np.ndarray, np.ndarray]:
+    center: list[float] | None = None,
+    spread: float = 0.05,  # Reduced spread so points are closer (better for routing)
+    seed: int = 123,
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Generate VRP instance with REAL road distances.
     """
@@ -78,9 +76,9 @@ def generate_distance_matrix(
 
 
 def calculate_route_distance(
-    route: List[int],
+    route: list[int],
     distance_matrix: np.ndarray,
-    traffic_multipliers: Optional[np.ndarray] = None
+    traffic_multipliers: np.ndarray | None = None,
 ) -> float:
     """
     Calculate total distance for a single route.
@@ -106,10 +104,10 @@ def calculate_route_distance(
 
 
 def calculate_all_routes_distance(
-    routes: List[List[int]],
+    routes: list[list[int]],
     distance_matrix: np.ndarray,
-    traffic_multipliers: Optional[np.ndarray] = None
-) -> Tuple[List[float], float]:
+    traffic_multipliers: np.ndarray | None = None,
+) -> tuple[list[float], float]:
     """
     Calculate distances for all routes.
 
@@ -128,10 +126,10 @@ def calculate_all_routes_distance(
 
 
 def validate_routes(
-    routes: List[List[int]],
+    routes: list[list[int]],
     num_locations: int,
-    depot: int = 0
-) -> Tuple[bool, str]:
+    depot: int = 0,
+) -> tuple[bool, str]:
     """
     Validate that routes are feasible.
 
@@ -165,15 +163,15 @@ def validate_routes(
 
 
 def format_solution_response(
-    routes: List[List[int]],
+    routes: list[list[int]],
     coordinates: np.ndarray,
     distance_matrix: np.ndarray,
     traffic_multipliers: np.ndarray,
     execution_time: float,
     method: str,
     is_quantum: bool,
-    notes: str
-) -> Dict:
+    notes: str,
+) -> dict[str, object]:
     """
     Format solution into standardized API response.
     """
@@ -196,8 +194,8 @@ def format_solution_response(
 def generate_traffic_scenario(
     distance_matrix: np.ndarray,
     jam_probability: float = 0.2,
-    severity_range: Tuple[float, float] = (1.5, 3.0),
-    seed: int = 42
+    severity_range: tuple[float, float] = (1.5, 3.0),
+    seed: int = 42,
 ) -> np.ndarray:
     """
     Generate random traffic scenario for testing.
@@ -231,8 +229,8 @@ def estimate_fuel_savings(
     optimized_distance: float,
     fuel_efficiency_km_per_liter: float = 16.0,
     fuel_price_per_liter: float = 90.0,
-    operating_days_per_year: int = 300
-) -> Dict[str, float]:
+    operating_days_per_year: int = 300,
+) -> dict[str, float]:
     """
     Estimate economic impact of optimization.
 
@@ -281,7 +279,7 @@ class PerformanceMonitor:
         if endpoint in self.request_counts:
             self.request_counts[endpoint] += 1
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict[str, object]:
         """Get performance statistics."""
         if not self.request_times:
             return {"message": "No requests recorded yet"}

@@ -11,15 +11,14 @@ import csv
 import json
 import sys
 import time
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
-
 from typing import Any, TypedDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT))
 
-from modules.independent_set_qrc import (  # noqa: E402 # pylint: disable=wrong-import-position,import-error
+from modules.independent_set_qrc import (  # pylint: disable=wrong-import-position,import-error
     parse_dimacs_graph,
     parse_optimal_solution,
     sample_repaired_independent_sets,
@@ -103,7 +102,7 @@ def _benchmark_instance(  # pylint: disable=too-many-locals
         "Problem": instance_name,
         "Submitter": "Entangle Minds Team",
         "Affiliation": "Q-Fleet",
-        "Date": date.today().isoformat(),
+        "Date": datetime.now(timezone.utc).date().isoformat(),
         "Reference": "This repository; scripts/benchmark_independent_set.py",
         "Best Objective Value": str(best_objective),
         "Optimality Bound": str(optimum),

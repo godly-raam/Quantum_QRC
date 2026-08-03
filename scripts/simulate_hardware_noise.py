@@ -7,11 +7,8 @@ Target: Proof of NISQ viability via IBM FakeKyiv Simulation
 """
 
 import os
-
-# Import the local LCU module you built
 import sys
 from importlib import import_module
-from typing import Dict
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,7 +17,8 @@ from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
 from qiskit_aer import AerSimulator
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from modules.lcu_constraint_flattener import (  # noqa: E402 # pylint: disable=wrong-import-position,import-error
+# Import the local LCU module.
+from modules.lcu_constraint_flattener import (  # pylint: disable=wrong-import-position,import-error
     build_lcu_constraint_layer,
     sample_lcu_branch,
 )
@@ -47,7 +45,7 @@ def build_standard_qaoa_penalty(
     return qc
 
 
-def calculate_tvd(ideal_dist: Dict[str, float], noisy_dist: Dict[str, float]) -> float:
+def calculate_tvd(ideal_dist: dict[str, float], noisy_dist: dict[str, float]) -> float:
     """Calculates Total Variation Distance between two probability distributions."""
     tvd = 0.0
     all_keys = set(ideal_dist.keys()).union(set(noisy_dist.keys()))
