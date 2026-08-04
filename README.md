@@ -127,3 +127,30 @@ Before attributing any result to "quantum" advantage, we tested whether the quan
 - We do not currently have a result in which the quantum reservoir outperforms the matched classical baseline on either metric. This ablation should be read as an open problem for the project's core architecture, not a settled negative — barren-plateau mitigation strategies (e.g. problem-informed ansatz design, layerwise training, or restricting to shallower/more local entangling structure) are a concrete direction for future work rather than a dead end.
 
 Raw JSON outputs for all five runs are available via `scripts/benchmark_classical_reservoir.py --qubits {4,8,12,16,20} --instances 20 --vehicles 4`.
+
+### Ansatz comparison at small scale (4 qubits)
+
+The ring-topology results above use a specific entangling pattern (global CZ ring, 2 layers). We tested whether a shallower, purely local-entanglement ansatz (1 RX layer + nearest-neighbor-only CZ, no ring closure — see `build_shallow_local_reservoir()` in `modules/reservoir_trainer.py`) changes the picture, across 5 seeds at 4 qubits:
+
+| Seed | Shallow-local route cost | Ring route cost | Classical ESN route cost | Shallow-local vs. classical |
+|---|---|---|---|---|
+| 1 | 2.393 | 2.668 | 2.425 | 1.3% better |
+| 7 | 2.398 | 2.801 | 2.492 | 3.8% better |
+| 42 | 2.287 | 2.595 | 2.455 | 6.8% better |
+| 99 | 2.336 | 2.625 | 2.424 | 3.6% better |
+| 123 | 2.571 | 3.081 | 2.479 | 3.7% worse |
+
+**Findings:**
+
+- The shallow-local ansatz outperformed the classical ESN in 4 of 5 seeds at 4 qubits (worse in 1/5). The ring ansatz was worse than the classical ESN in all 5 seeds, by consistently larger margins.
+- This is the only regime found so far (across all ansätze and all qubit counts 4–20 tested) where a quantum-reservoir variant is competitive with or ahead of the classical baseline on route cost.
+- The advantage does not persist to larger sizes: shallow-local's expressivity collapses faster than ring's as qubit count grows (see table below), so whatever helps at 4 qubits does not scale.
+- **Methodological limitation**: `train_reservoir_offline()` currently fixes its own internal training RNG to a constant seed (42) regardless of the `--seed` flag used for the outer benchmark. The 5-seed sweep above varies the synthetic VRP instances, ESN initialization, and quantum sampling — but not the trained ansatz parameters themselves, which stay identical across all 5 runs. A fully independent confirmation would also vary the trainer seed. We report this result with that caveat rather than treating it as fully established; it is evidence the effect is not purely a one-off, not proof of a robust general advantage.
+
+| Qubits | Shallow-local expressivity | Ring expressivity | Classical ESN expressivity |
+|---|---|---|---|
+| 4 | 0.313 | 0.714 | 0.141 |
+| 8 | 0.144 | 0.976 | 0.830 |
+| 12 | 0.049 | 0.364 | 1.615 |
+| 16 | 0.021 | 0.178 | 4.321 |
+| 20 | 0.011 | 0.118 | 5.216 |

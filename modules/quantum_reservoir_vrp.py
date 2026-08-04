@@ -9,10 +9,12 @@ No re-optimization needed - reservoir naturally adapts.
 Authors: Entangle Minds Team
 """
 
+from collections.abc import Callable
+
 import numpy as np
 import logging
 import time
-from typing import List, Tuple, Dict, Any, Optional, Callable
+from typing import List, Tuple, Dict, Any, Optional
 from dataclasses import dataclass
 from scipy.stats import pearsonr
 from qiskit import QuantumCircuit
@@ -217,7 +219,8 @@ class QuantumReservoir:
         coupling_strength: float = 0.1,
         random_seed: int = 42,
         trained_params: Optional[np.ndarray] = None,
-        reservoir_layers: int = 2
+        reservoir_layers: int = 2,
+        reservoir_builder: Optional[Callable[[int, int], QuantumCircuit]] = None,
     ):
         """
         Initialize quantum reservoir.
@@ -232,6 +235,7 @@ class QuantumReservoir:
         self.dim = 2 ** n_reservoir_qubits
         self.trained_params = trained_params
         self.reservoir_layers = reservoir_layers
+        self.reservoir_builder = reservoir_builder
         
         # FIX: Remove global np.random.seed(random_seed)
         self.rng = np.random.default_rng(random_seed)
@@ -322,9 +326,9 @@ class QuantumReservoir:
         No variational training happens on the QPU.
         """
         from modules.reservoir_trainer import build_parameterized_reservoir
-        
-        # Get the parameterized shell
-        parameterized_qc = build_parameterized_reservoir(self.n_qubits, self.reservoir_layers)
+
+        circuit_builder = self.reservoir_builder or build_parameterized_reservoir
+        parameterized_qc = circuit_builder(self.n_qubits, self.reservoir_layers)
         
         # Bind the offline-trained parameters to lock the circuit
         if self.trained_params is not None:

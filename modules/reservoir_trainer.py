@@ -1,8 +1,10 @@
+from collections.abc import Callable  # noqa: I001
+
 import numpy as np
 from qiskit import QuantumCircuit
 from qiskit.circuit import ParameterVector
+from qiskit.quantum_info import SparsePauliOp, Statevector
 from scipy.optimize import minimize
-from qiskit.quantum_info import Statevector, SparsePauliOp
 
 def build_parameterized_reservoir(num_qubits: int, layers: int = 2) -> QuantumCircuit:
     """
@@ -29,14 +31,36 @@ def build_parameterized_reservoir(num_qubits: int, layers: int = 2) -> QuantumCi
             
     return qc
 
-def train_reservoir_offline(num_qubits: int, layers: int = 2, maxiter: int = 100) -> np.ndarray:
+
+def build_shallow_local_reservoir(
+    num_qubits: int, layers: int = 1
+) -> QuantumCircuit:
+    """Build a one-layer, nearest-neighbor-only reservoir for ablation tests."""
+    if layers != 1:
+        raise ValueError("The shallow-local reservoir is intentionally limited to one layer")
+
+    qc = QuantumCircuit(num_qubits)
+    theta = ParameterVector("θ", length=num_qubits)
+    for qubit in range(num_qubits):
+        qc.rx(theta[qubit], qubit)
+    for qubit in range(num_qubits - 1):
+        qc.cz(qubit, qubit + 1)
+    return qc
+
+
+def train_reservoir_offline(
+    num_qubits: int,
+    layers: int = 2,
+    maxiter: int = 100,
+    circuit_builder: Callable[[int, int], QuantumCircuit] = build_parameterized_reservoir,
+) -> np.ndarray:
     """
     Optimizes the fixed parameters to maximize the reservoir's expressivity
     (output variance across different logistics input states).
 
     Added maxiter param so training runs can be compared quickly in tests.
     """
-    qc = build_parameterized_reservoir(num_qubits, layers)
+    qc = circuit_builder(num_qubits, layers)
     rng = np.random.default_rng(42)
     
     # Generate 5 random input states simulating different logistics graphs

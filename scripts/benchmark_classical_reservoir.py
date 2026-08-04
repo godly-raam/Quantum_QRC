@@ -12,8 +12,9 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
+from itertools import pairwise
 
 import numpy as np
 from qiskit.quantum_info import Statevector
@@ -21,11 +22,13 @@ from qiskit.quantum_info import Statevector
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(PROJECT_ROOT)
 
-from modules.quantum_reservoir_vrp import (  # noqa: E402 # pylint: disable=wrong-import-position,import-error
+from modules.quantum_reservoir_vrp import (  # pylint: disable=wrong-import-position,import-error
     QuantumReservoir,
     ReservoirVRPSolver,
 )
-from modules.reservoir_trainer import (  # noqa: E402 # pylint: disable=wrong-import-position,import-error
+from modules.reservoir_trainer import (  # pylint: disable=wrong-import-position,import-error
+    build_parameterized_reservoir,
+    build_shallow_local_reservoir,
     train_reservoir_offline,
 )
 
@@ -80,7 +83,7 @@ def _route_cost(routes: list[list[int]], distance_matrix: np.ndarray) -> float:
         sum(
             distance_matrix[start, end]
             for route in routes
-            for start, end in zip(route, route[1:])
+            for start, end in pairwise(route)
         )
     )
 
@@ -133,6 +136,12 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument(
+        "--ansatz",
+        choices=("ring", "shallow_local"),
+        default="ring",
+        help="Quantum reservoir entangling pattern (default: ring)",
+    )
+    parser.add_argument(
         "--weights",
         default=None,
         help="Path to locked quantum parameters; trains with reservoir_trainer if omitted",
@@ -144,22 +153,35 @@ def main() -> None:
     if args.instances < 2:
         parser.error("--instances must be at least 2 to measure expressivity variance")
 
-    weights_path = args.weights or os.path.join(
-        PROJECT_ROOT, "weights", f"locked_reservoir_params_{args.qubits}q.npy"
+    reservoir_layers = 1 if args.ansatz == "shallow_local" else 2
+    reservoir_builder = (
+        build_shallow_local_reservoir if args.ansatz == "shallow_local" else None
     )
+    default_weight_name = (
+        f"locked_{args.ansatz}_reservoir_params_{args.qubits}q.npy"
+        if args.ansatz == "shallow_local"
+        else f"locked_reservoir_params_{args.qubits}q.npy"
+    )
+    weights_path = args.weights or os.path.join(PROJECT_ROOT, "weights", default_weight_name)
     if os.path.exists(weights_path):
-        quantum_params = np.load(weights_path)
+        quantum_params = np.load(weights_path, allow_pickle=False)
     else:
         print(
             "No locked quantum weights found; "
-            "training with reservoir_trainer.train_reservoir_offline()."
+            f"training the {args.ansatz} ansatz with reservoir_trainer.train_reservoir_offline()."
         )
-        quantum_params = train_reservoir_offline(args.qubits)
+        quantum_params = train_reservoir_offline(
+            args.qubits,
+            layers=reservoir_layers,
+            circuit_builder=reservoir_builder or build_parameterized_reservoir,
+        )
 
     quantum_reservoir = QuantumReservoir(
         n_reservoir_qubits=args.qubits,
         trained_params=quantum_params,
         random_seed=args.seed,
+        reservoir_layers=reservoir_layers,
+        reservoir_builder=reservoir_builder,
     )
     esn = EchoStateNetwork(size=args.qubits, input_dim=args.qubits * args.qubits, seed=args.seed)
     decoder = ReservoirVRPSolver(n_reservoir_qubits=args.qubits, trained_params=quantum_params)
@@ -193,6 +215,8 @@ def main() -> None:
             "instances": args.instances,
             "vehicles": args.vehicles,
             "seed": args.seed,
+            "ansatz": args.ansatz,
+            "reservoir_layers": reservoir_layers,
         },
         "quantum_reservoir": {
             "expressivity_variance": quantum_results[0],
