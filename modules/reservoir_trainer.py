@@ -1,4 +1,5 @@
-from collections.abc import Callable  # noqa: I001
+from collections.abc import Callable, Sequence  # noqa: I001
+from typing import Optional
 
 import numpy as np
 from qiskit import QuantumCircuit
@@ -53,34 +54,53 @@ def train_reservoir_offline(
     layers: int = 2,
     maxiter: int = 100,
     circuit_builder: Callable[[int, int], QuantumCircuit] = build_parameterized_reservoir,
+    seed: int = 42,
+    input_sampler: Optional[
+        Callable[[np.random.Generator], Sequence[QuantumCircuit]]
+    ] = None,
+    observables: Sequence[str] = ("Z",),
 ) -> np.ndarray:
     """
     Optimizes the fixed parameters to maximize the reservoir's expressivity
     (output variance across different logistics input states).
 
-    Added maxiter param so training runs can be compared quickly in tests.
+    ``seed`` controls both the initial parameters and input sampling.  Passing
+    ``input_sampler`` replaces the legacy RY product states with circuits from
+    the real deployment feature map; the sampler receives the seeded RNG.
+
+    ``observables`` may include ``"X"``, ``"Y"``, and ``"Z"``.  The legacy
+    objective used only ``"Z"``; deployment feature maps are phase-only, so
+    they need the off-diagonal observables to provide a training signal.
     """
     qc = circuit_builder(num_qubits, layers)
-    rng = np.random.default_rng(42)
-    
-    # Generate 5 random input states simulating different logistics graphs
-    input_circuits = []
-    for _ in range(5):
-        circ = QuantumCircuit(num_qubits)
-        # Use RY to rotate qubits off the Z-pole. RY keeps states real-valued and
-        # therefore causes measurable population changes in the Z-basis (unlike RZ,
-        # which only adds phases on the |0> state). This change fixes a previous
-        # bug where all training inputs were physically identical under Z measurements.
-        for i in range(num_qubits):
-            circ.ry(rng.uniform(0, 2*np.pi), i)
-        input_circuits.append(circ)
+    rng = np.random.default_rng(seed)
+
+    if input_sampler is None:
+        # Generate 5 random input states simulating different logistics graphs
+        input_circuits = []
+        for _ in range(5):
+            circ = QuantumCircuit(num_qubits)
+            # Use RY to rotate qubits off the Z-pole. RY keeps states real-valued and
+            # therefore causes measurable population changes in the Z-basis (unlike RZ,
+            # which only adds phases on the |0> state). This change fixes a previous
+            # bug where all training inputs were physically identical under Z measurements.
+            for i in range(num_qubits):
+                circ.ry(rng.uniform(0, 2*np.pi), i)
+            input_circuits.append(circ)
+    else:
+        input_circuits = list(input_sampler(rng))
+        if not input_circuits:
+            raise ValueError("input_sampler returned no circuits")
         
-    # Define observables (Z expectations for each qubit)
-    observables = []
-    for i in range(num_qubits):
-        pauli_str = ['I'] * num_qubits
-        pauli_str[num_qubits - 1 - i] = 'Z'
-        observables.append(SparsePauliOp("".join(pauli_str)))
+    # Define Pauli observables for each qubit and requested basis.
+    observable_ops = []
+    for basis in observables:
+        if basis not in ("X", "Y", "Z"):
+            raise ValueError("observables must contain only X, Y, or Z")
+        for i in range(num_qubits):
+            pauli_str = ['I'] * num_qubits
+            pauli_str[num_qubits - 1 - i] = basis
+            observable_ops.append(SparsePauliOp("".join(pauli_str)))
         
     def expressivity_cost(params):
         bound_qc = qc.assign_parameters(params)
@@ -91,7 +111,7 @@ def train_reservoir_offline(
             full_circ = in_circ.compose(bound_qc)
             # Use Statevector.from_instruction to ensure proper circuit->state conversion
             sv = Statevector.from_instruction(full_circ)
-            exp_vals = [np.real(sv.expectation_value(op)) for op in observables]
+            exp_vals = [np.real(sv.expectation_value(op)) for op in observable_ops]
             all_expectations.append(exp_vals)
             
         # True Expressivity: Maximize the variance of outputs

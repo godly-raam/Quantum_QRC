@@ -65,22 +65,43 @@ FEATURE_METHODS = (
 
 @dataclass(frozen=True)
 class Instance:
-    """A random Euclidean VRP instance."""
+    """A random Euclidean, capacitated VRP instance."""
 
     seed: int
     n_locations: int
     coordinates: np.ndarray
     distances: np.ndarray
+    demands: np.ndarray
+    capacity: int
 
 
-def generate_instance(seed: int, n_locations: int) -> Instance:
-    """Generate a reproducible random Euclidean instance in the unit square."""
+def generate_instance(
+    seed: int,
+    n_locations: int,
+    n_vehicles: int = 4,
+    capacity_slack: float = 1.25,
+) -> Instance:
+    """Generate a reproducible capacitated Euclidean instance in the unit square.
+
+    Without a capacity constraint an uncapacitated VRP is a TSP: the optimal
+    solution puts every customer on one vehicle, so one-hot vehicle targets are
+    degenerate.  Demands and a capacity that requires roughly all vehicles make
+    the assignment learnable.
+    """
     rng = np.random.default_rng(seed)
     coordinates = rng.random((n_locations, 2))
     deltas = coordinates[:, None, :] - coordinates[None, :, :]
     distances = np.linalg.norm(deltas, axis=2)
     np.fill_diagonal(distances, 0.0)
-    return Instance(seed, n_locations, coordinates, distances)
+
+    demands = rng.integers(1, 10, size=n_locations).astype(int)
+    demands[0] = 0
+    total_demand = int(demands.sum())
+    capacity = max(
+        int(np.ceil(capacity_slack * total_demand / n_vehicles)),
+        int(demands.max()),
+    )
+    return Instance(seed, n_locations, coordinates, distances, demands, capacity)
 
 
 def instance_seed(outer_seed: int, n_locations: int, index: int) -> int:
@@ -101,7 +122,11 @@ def make_split(
 ) -> tuple[list[Instance], list[Instance]]:
     """Build train/test instances; the split is by instance seed/index."""
     instances = [
-        generate_instance(instance_seed(outer_seed, n_locations, index), n_locations)
+        generate_instance(
+            instance_seed(outer_seed, n_locations, index),
+            n_locations,
+            n_vehicles=4,
+        )
         for index in range(total)
     ]
     return instances[:train_count], instances[train_count:]
@@ -123,8 +148,10 @@ def solve_ortools(
     n_vehicles: int,
     time_limit_seconds: float,
     seed: int = 0,
+    demands: Optional[np.ndarray] = None,
+    capacity: Optional[int] = None,
 ) -> tuple[list[list[int]], float, float]:
-    """Solve a VRP with OR-Tools and return routes, cost, and wall time."""
+    """Solve a (possibly capacitated) VRP with OR-Tools."""
     from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
     n_locations = distances.shape[0]
@@ -140,6 +167,22 @@ def solve_ortools(
     transit_index = routing.RegisterTransitCallback(distance_callback)
     routing.SetArcCostEvaluatorOfAllVehicles(transit_index)
 
+    if demands is not None and capacity is not None:
+        demands_array = np.asarray(demands, dtype=int)
+
+        def demand_callback(from_index: int) -> int:
+            node = manager.IndexToNode(from_index)
+            return int(demands_array[node])
+
+        demand_index = routing.RegisterUnaryTransitCallback(demand_callback)
+        routing.AddDimensionWithVehicleCapacity(
+            demand_index,
+            0,
+            [int(capacity)] * n_vehicles,
+            True,
+            "Capacity",
+        )
+
     parameters = pywrapcp.DefaultRoutingSearchParameters()
     parameters.first_solution_strategy = (
         routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
@@ -150,14 +193,13 @@ def solve_ortools(
     parameters.time_limit.FromMilliseconds(
         max(1, int(round(time_limit_seconds * 1000)))
     )
-    parameters.random_seed = int(seed)
 
     started = time.perf_counter()
     solution = routing.SolveWithParameters(parameters)
     elapsed = time.perf_counter() - started
 
     if solution is None:
-        routes = [[0] + list(range(1, n_locations)) + [0]]
+        routes = fallback_capacity_routes(distances, n_vehicles, demands, capacity)
         return routes, route_cost(routes, distances), elapsed
 
     routes = []
@@ -169,6 +211,34 @@ def solve_ortools(
             route.append(manager.IndexToNode(index))
         routes.append(route)
     return routes, route_cost(routes, distances), elapsed
+
+
+def fallback_capacity_routes(
+    distances: np.ndarray,
+    n_vehicles: int,
+    demands: Optional[np.ndarray],
+    capacity: Optional[int],
+) -> list[list[int]]:
+    """Greedy feasible fallback used only if OR-Tools finds no solution."""
+    n_locations = distances.shape[0]
+    customers = list(range(1, n_locations))
+    if demands is None or capacity is None:
+        return [[0] + customers + [0]]
+    loads = [0] * n_vehicles
+    routes = [[0] for _ in range(n_vehicles)]
+    for customer in sorted(customers, key=lambda node: -int(demands[node])):
+        feasible = [
+            vehicle
+            for vehicle in range(n_vehicles)
+            if loads[vehicle] + int(demands[customer]) <= capacity
+        ]
+        vehicle = min(
+            feasible or range(n_vehicles),
+            key=lambda candidate: loads[candidate],
+        )
+        routes[vehicle].append(customer)
+        loads[vehicle] += int(demands[customer])
+    return [route + [0] for route in routes]
 
 
 def canonical_assignments(
@@ -343,6 +413,7 @@ def train_quantum_parameters(
         input_sampler=deployment_input_sampler(
             n_qubits, angle_scale, use_depot_diagonal, num_samples
         ),
+        observables=("X", "Y", "Z"),
     )
 
 
@@ -423,12 +494,17 @@ def predict_assignment(
 def _decode(
     solver: ReservoirVRPSolver,
     assignment: np.ndarray,
-    distances: np.ndarray,
+    instance: Instance,
     n_vehicles: int,
     ordering: str,
 ) -> list[list[int]]:
     return solver._decode_assignment(  # pylint: disable=protected-access
-        assignment, n_vehicles, distances, ordering=ordering
+        assignment,
+        n_vehicles,
+        instance.distances,
+        ordering=ordering,
+        demands=instance.demands,
+        capacity=instance.capacity,
     )
 
 
@@ -540,12 +616,12 @@ def evaluate_method(
         else:
             raise ValueError(f"Unknown method {method}")
 
-        routes = _decode(solver, assignment, instance.distances, n_vehicles, ordering)
+        routes = _decode(solver, assignment, instance, n_vehicles, ordering)
         cost = route_cost(routes, instance.distances)
         route_cost_index = cost
         if ordering != "index":
             index_routes = _decode(
-                solver, assignment, instance.distances, n_vehicles, "index"
+                solver, assignment, instance, n_vehicles, "index"
             )
             route_cost_index = route_cost(index_routes, instance.distances)
         elapsed = time.perf_counter() - started + test_feature_times[index]
@@ -590,7 +666,7 @@ def evaluate_method(
                 readout_mode,
             )
             index_routes = _decode(
-                solver, assignment, instance.distances, n_vehicles, "index"
+                solver, assignment, instance, n_vehicles, "index"
             )
             trained_index_costs.append(route_cost(index_routes, instance.distances))
         diagnostic = {
@@ -722,8 +798,8 @@ def run_benchmark(args: argparse.Namespace) -> None:
     for size in args.sizes:
         if size > 20:
             raise ValueError("Quantum runs are limited to at most 20 qubits")
-        if size < args.vehicles + 1:
-            raise ValueError("n_locations must exceed the number of vehicles")
+        if size < 2:
+            raise ValueError("n_locations must be at least two")
 
         for outer_seed in args.outer_seeds:
             train_instances, test_instances = make_split(
@@ -744,6 +820,8 @@ def run_benchmark(args: argparse.Namespace) -> None:
                     args.vehicles,
                     args.ortools_seconds,
                     seed=outer_seed * 1000 + index,
+                    demands=instance.demands,
+                    capacity=instance.capacity,
                 )
                 reference_routes.append(routes)
                 reference_costs.append(cost)
@@ -754,6 +832,8 @@ def run_benchmark(args: argparse.Namespace) -> None:
                     args.vehicles,
                     args.ortools_latency_seconds,
                     seed=outer_seed * 1000 + index + 7,
+                    demands=instance.demands,
+                    capacity=instance.capacity,
                 )
                 latency_costs.append(latency_cost)
                 latency_times.append(latency_elapsed)
@@ -1041,6 +1121,8 @@ def run_encoding_sweep(args: argparse.Namespace) -> None:
                 args.vehicles,
                 args.ortools_seconds,
                 seed=outer_seed * 1000 + index,
+                demands=instance.demands,
+                capacity=instance.capacity,
             )
             reference_routes.append(routes)
         train_assignments = canonical_assignments(
@@ -1070,6 +1152,7 @@ def run_encoding_sweep(args: argparse.Namespace) -> None:
                 train_assignments,
                 train_instances,
                 args.vehicles,
+                n_qubits=size,
                 seed=outer_seed * 10_000 + size,
                 alphas=args.alphas,
                 ordering=args.ordering,
@@ -1137,6 +1220,7 @@ def _cross_validated_route_cost(
     assignments: Sequence[np.ndarray],
     instances: Sequence[Instance],
     n_vehicles: int,
+    n_qubits: int,
     seed: int,
     alphas: Sequence[float],
     ordering: str,
@@ -1150,7 +1234,7 @@ def _cross_validated_route_cost(
     rng = np.random.default_rng(seed)
     rng.shuffle(indices)
     costs = np.zeros(n_samples)
-    solver = ReservoirVRPSolver(n_reservoir_qubits=len(features[0]) // 10 + 1)
+    solver = ReservoirVRPSolver(n_reservoir_qubits=n_qubits)
     for fold in np.array_split(indices, folds):
         mask = np.ones(n_samples, dtype=bool)
         mask[fold] = False
@@ -1171,6 +1255,8 @@ def _cross_validated_route_cost(
                 n_vehicles,
                 instances[index].distances,
                 ordering=ordering,
+                demands=instances[index].demands,
+                capacity=instances[index].capacity,
             )
             costs[index] = route_cost(routes, instances[index].distances)
     return costs.tolist()

@@ -670,6 +670,8 @@ class ReservoirVRPSolver:
         n_vehicles: int,
         distance_matrix: Optional[np.ndarray],
         ordering: str = "nn2opt",
+        demands: Optional[np.ndarray] = None,
+        capacity: Optional[float] = None,
     ) -> List[List[int]]:
         """Turn one vehicle label per customer into ordered routes."""
         labels = np.asarray(assignment).astype(int).reshape(-1)
@@ -679,9 +681,84 @@ class ReservoirVRPSolver:
         }
         for location, vehicle in enumerate(labels, start=1):
             vehicle_stops[int(vehicle) % n_vehicles].append(location)
+        if demands is not None and capacity is not None:
+            vehicle_stops = self._repair_capacity(
+                vehicle_stops, demands, capacity, n_vehicles
+            )
         return self._order_vehicle_stops(
             vehicle_stops, n_vehicles, distance_matrix, ordering
         )
+
+    @staticmethod
+    def _repair_capacity(
+        vehicle_stops: Dict[int, List[int]],
+        demands: np.ndarray,
+        capacity: float,
+        n_vehicles: int,
+    ) -> Dict[int, List[int]]:
+        """Move customers off overloaded vehicles; repack only if necessary."""
+        demands = np.asarray(demands)
+        stops = {vehicle: list(nodes) for vehicle, nodes in vehicle_stops.items()}
+        loads = {
+            vehicle: int(sum(demands[node] for node in nodes))
+            for vehicle, nodes in stops.items()
+        }
+        if all(loads[vehicle] <= capacity for vehicle in range(n_vehicles)):
+            return stops
+
+        # Try to preserve the learned assignment by moving overflow customers.
+        for _ in range(4 * max(1, sum(len(nodes) for nodes in stops.values()))):
+            overloaded = [
+                vehicle
+                for vehicle in range(n_vehicles)
+                if loads[vehicle] > capacity
+            ]
+            if not overloaded:
+                return stops
+            source = max(overloaded, key=lambda vehicle: loads[vehicle])
+            moved = False
+            for customer in sorted(
+                stops[source], key=lambda node: (-int(demands[node]), node)
+            ):
+                destinations = sorted(
+                    (vehicle for vehicle in range(n_vehicles) if vehicle != source),
+                    key=lambda vehicle: capacity - loads[vehicle],
+                    reverse=True,
+                )
+                for destination in destinations:
+                    if loads[destination] + int(demands[customer]) <= capacity:
+                        stops[source].remove(customer)
+                        stops[destination].append(customer)
+                        loads[source] -= int(demands[customer])
+                        loads[destination] += int(demands[customer])
+                        moved = True
+                        break
+                if moved:
+                    break
+            if not moved:
+                break
+
+        # Last resort: first-fit decreasing over all customers.  This keeps the
+        # solution feasible but discards the learned labels, so it is rare.
+        all_customers = sorted(
+            (node for nodes in stops.values() for node in nodes),
+            key=lambda node: (-int(demands[node]), node),
+        )
+        repacked: Dict[int, List[int]] = {vehicle: [] for vehicle in range(n_vehicles)}
+        repacked_loads = {vehicle: 0 for vehicle in range(n_vehicles)}
+        for customer in all_customers:
+            feasible = [
+                vehicle
+                for vehicle in range(n_vehicles)
+                if repacked_loads[vehicle] + int(demands[customer]) <= capacity
+            ]
+            destination = min(
+                feasible or range(n_vehicles),
+                key=lambda vehicle: (repacked_loads[vehicle], vehicle),
+            )
+            repacked[destination].append(customer)
+            repacked_loads[destination] += int(demands[customer])
+        return repacked
 
     def _order_vehicle_stops(
         self,
@@ -962,7 +1039,9 @@ class ReservoirVRPSolver:
         return new_solution
 
 
-def generate_synthetic_training_data(n_instances: int = 30) -> List[Dict]:
+def generate_synthetic_training_data(
+    n_instances: int = 30, seed: int = 42
+) -> List[Dict]:
     """Generate training data for reservoir, using real datasets if available."""
     import os
     import glob
@@ -980,7 +1059,7 @@ def generate_synthetic_training_data(n_instances: int = 30) -> List[Dict]:
     logger.info(f"Generating {n_instances} training instances...")
     
     training_data = []
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(seed)
     
     data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'QOBLIB', '09-routing', 'instances')
     vrp_files = []

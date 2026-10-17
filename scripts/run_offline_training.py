@@ -20,14 +20,14 @@ def main() -> None:
 
     # Train for 8 qubits (local testing)
     print("Training 8-qubit reservoir...")
-    params_8q = train_reservoir_offline(num_qubits=8, layers=2)
+    params_8q = train_reservoir_offline(num_qubits=8, layers=2, seed=42)
     path_8q = os.path.join(weights_dir, "locked_reservoir_params_8q.npy")
     np.save(path_8q, params_8q)
     print(f"Saved 8-qubit parameters to {path_8q}\n")
 
     # Train for 27 qubits (MO-QAOA paper spec)
     print("Training 27-qubit reservoir...")
-    params_27q = train_reservoir_offline(num_qubits=27, layers=2)
+    params_27q = train_reservoir_offline(num_qubits=27, layers=2, seed=42)
     path_27q = os.path.join(weights_dir, "locked_reservoir_params_27q.npy")
     np.save(path_27q, params_27q)
     print(f"Saved 27-qubit parameters to {path_27q}\n")

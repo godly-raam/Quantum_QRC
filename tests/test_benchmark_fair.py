@@ -57,3 +57,12 @@ def test_bootstrap_ci_recovers_mean() -> None:
     assert mean == 2.5
     assert low == 2.5
     assert high == 2.5
+
+
+def test_instances_are_capacitated_and_require_multiple_vehicles() -> None:
+    instance = generate_instance(1234, 12, n_vehicles=4)
+    assert instance.demands.shape == (12,)
+    assert instance.demands[0] == 0
+    assert instance.demands[1:].min() >= 1
+    assert instance.capacity >= instance.demands.max()
+    assert instance.capacity * 4 >= instance.demands.sum()
