@@ -129,3 +129,32 @@ def test_reservoir_seeded_architecture_is_deterministic() -> None:
         Statevector.from_instruction(circuit_a).data,
         Statevector.from_instruction(circuit_b).data,
     )
+
+
+def test_fast_observable_measurement_matches_qiskit() -> None:
+    from scripts.benchmark_fair import measure_observables_fast
+
+    n_qubits = 5
+    reservoir = QuantumReservoir(
+        n_qubits, random_seed=1, trained_params=np.zeros(2 * n_qubits)
+    )
+    rng = np.random.default_rng(9)
+    state = rng.normal(size=2**n_qubits) + 1j * rng.normal(size=2**n_qubits)
+    state /= np.linalg.norm(state)
+    fast = measure_observables_fast(state, n_qubits)
+    qiskit = reservoir.measure_observables(state)
+    assert np.allclose(fast, qiskit, atol=1e-12)
+
+
+def test_quantum_features_are_seeded() -> None:
+    from scripts.benchmark_fair import quantum_features
+
+    distances = np.array(
+        [[0.0, 1.0, 2.0, 3.0], [1.0, 0.0, 1.0, 2.0], [2.0, 1.0, 0.0, 1.0], [3.0, 2.0, 1.0, 0.0]]
+    )
+    first = QuantumReservoir(4, random_seed=3, trained_params=np.zeros(8))
+    second = QuantumReservoir(4, random_seed=3, trained_params=np.zeros(8))
+    assert np.allclose(
+        quantum_features(first, distances, 2, lcu_theta=0.2),
+        quantum_features(second, distances, 2, lcu_theta=0.2),
+    )
