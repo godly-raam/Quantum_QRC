@@ -221,6 +221,9 @@ class QuantumReservoir:
         trained_params: Optional[np.ndarray] = None,
         reservoir_layers: int = 2,
         reservoir_builder: Optional[Callable[[int, int], QuantumCircuit]] = None,
+        angle_scale: float = 1.0,
+        use_depot_diagonal: bool = False,
+        scalarization_seed: Optional[int] = None,
     ):
         """
         Initialize quantum reservoir.
@@ -229,6 +232,9 @@ class QuantumReservoir:
             n_reservoir_qubits: Size of quantum reservoir (10-15 practical)
             coupling_strength: Interaction strength in Hamiltonian
             random_seed: For reproducible random Hamiltonian
+            angle_scale: Scale applied to normalized feature-map angles
+            use_depot_diagonal: Put normalized depot distance on Q_ii
+            scalarization_seed: Seed for random convex scalarization weights
         """
         self.n_qubits = n_reservoir_qubits
         self.coupling = coupling_strength
@@ -236,9 +242,16 @@ class QuantumReservoir:
         self.trained_params = trained_params
         self.reservoir_layers = reservoir_layers
         self.reservoir_builder = reservoir_builder
+        self.angle_scale = angle_scale
+        self.use_depot_diagonal = use_depot_diagonal
         
         # FIX: Remove global np.random.seed(random_seed)
         self.rng = np.random.default_rng(random_seed)
+        self.scalarization_rng = (
+            np.random.default_rng(scalarization_seed)
+            if scalarization_seed is not None
+            else np.random.default_rng()
+        )
         
         # Current quantum state
         self.current_state = self._initialize_state()
@@ -303,11 +316,28 @@ class QuantumReservoir:
         state /= np.linalg.norm(state)
         return state
     
-    def encode_traffic_to_circuit(self, Q_fuel: np.ndarray, Q_time: np.ndarray) -> QuantumCircuit:
+    def encode_traffic_to_circuit(
+        self,
+        Q_fuel: np.ndarray,
+        Q_time: np.ndarray,
+        scalarized: bool = False,
+        scalarization_weights: Optional[Tuple[float, float]] = None,
+    ) -> QuantumCircuit:
         """
         Phase 1: Feature Map Encoding.
+
+        Set ``scalarized=True`` when ``Q_fuel`` is already the combined matrix,
+        so the encoder does not scalarize a second time.
         """
-        Q_combined, _ = generate_scalarized_cost_matrix(Q_fuel, Q_time)
+        if scalarized:
+            Q_combined = np.asarray(Q_fuel, dtype=float)
+        else:
+            Q_combined, _ = generate_scalarized_cost_matrix(
+                Q_fuel,
+                Q_time,
+                weights=scalarization_weights,
+                rng=self.scalarization_rng,
+            )
         
         # Pad to match reservoir qubits if necessary
         n_locations = Q_combined.shape[0]
@@ -318,7 +348,12 @@ class QuantumReservoir:
         elif n_locations > self.n_qubits:
             Q_combined = Q_combined[:self.n_qubits, :self.n_qubits]
             
-        return build_qrc_feature_map(Q_combined, self.n_qubits)
+        return build_qrc_feature_map(
+            Q_combined,
+            self.n_qubits,
+            angle_scale=self.angle_scale,
+            use_depot_diagonal=self.use_depot_diagonal,
+        )
         
     def build_reservoir_dynamics(self) -> QuantumCircuit:
         """
@@ -338,16 +373,60 @@ class QuantumReservoir:
             logger.warning("No trained_params provided! Returning unbound parameterized circuit.")
             return parameterized_qc
         
-    def build_full_architecture(self, Q_fuel: np.ndarray, Q_time: np.ndarray, target_active_vehicles: int) -> QuantumCircuit:
+    def build_full_architecture(
+        self,
+        Q_fuel: np.ndarray,
+        Q_time: np.ndarray,
+        target_active_vehicles: int,
+        scalarized: bool = False,
+        scalarization_weights: Optional[Tuple[float, float]] = None,
+        lcu_theta: Optional[float] = None,
+    ) -> QuantumCircuit:
         """
         Composes the Feature Map, the LCU Constraint Layer, and the Reservoir.
+
+        When ``scalarized`` is true, ``Q_fuel`` is already the combined matrix
+        and is encoded directly (no second scalarization).
         """
         # 1. Feature Map (Phase 1)
-        qc_input = self.encode_traffic_to_circuit(Q_fuel, Q_time)
-        
+        qc_input = self.encode_traffic_to_circuit(
+            Q_fuel,
+            Q_time,
+            scalarized=scalarized,
+            scalarization_weights=scalarization_weights,
+        )
+        return self._compose_constraint_and_reservoir(
+            qc_input, target_active_vehicles, lcu_theta
+        )
+
+    def build_architecture_from_scalar(
+        self,
+        Q_scalar: np.ndarray,
+        target_active_vehicles: int,
+        lcu_theta: Optional[float] = None,
+    ) -> QuantumCircuit:
+        """Build the architecture from an already-scalarized cost matrix."""
+        qc_input = self.encode_traffic_to_circuit(
+            Q_scalar, Q_scalar, scalarized=True
+        )
+        return self._compose_constraint_and_reservoir(
+            qc_input, target_active_vehicles, lcu_theta
+        )
+
+    def _compose_constraint_and_reservoir(
+        self,
+        qc_input: QuantumCircuit,
+        target_active_vehicles: int,
+        lcu_theta: Optional[float],
+    ) -> QuantumCircuit:
+        """Attach the LCU constraint layer and fixed reservoir dynamics."""
         # 2. LCU Constraint Layer (Phase 2)
-        # We sample a random theta branch for the cardinality constraint
-        sampled_theta = sample_lcu_branch(self.n_qubits, target_active_vehicles, rng=self.rng)
+        if lcu_theta is None:
+            sampled_theta = sample_lcu_branch(
+                self.n_qubits, target_active_vehicles, rng=self.rng
+            )
+        else:
+            sampled_theta = float(lcu_theta)
         qc_constraint = build_lcu_constraint_layer(self.n_qubits, sampled_theta)
         
         # 3. Reservoir Dynamics
@@ -474,7 +553,13 @@ class ReservoirVRPSolver:
         logger.info("🧠 ReservoirVRPSolver initialized")
         logger.info("🔍 Embedding consistency tracking enabled (QuEra method)")
 
-    def solve_multi_objective(self, Q_fuel: np.ndarray, Q_time: np.ndarray, iterations: int = 100) -> Tuple[List[Tuple[float, float]], float]:
+    def solve_multi_objective(
+        self,
+        Q_fuel: np.ndarray,
+        Q_time: np.ndarray,
+        iterations: int = 100,
+        seed: Optional[int] = None,
+    ) -> Tuple[List[Tuple[float, float]], float]:
         """
         Runs the reservoir for multiple scalarizations to generate a Pareto front.
         Returns the non-dominated (fuel, time) pairs and total QPU execution time.
@@ -482,6 +567,10 @@ class ReservoirVRPSolver:
         import time
         from qiskit.quantum_info import Statevector
         from multi_objective_encoder import generate_scalarized_cost_matrix
+
+        scalarization_rng = (
+            np.random.default_rng(seed) if seed is not None else None
+        )
         
         qpu_time = 0.0
         pareto_front = []
@@ -498,11 +587,15 @@ class ReservoirVRPSolver:
         for i in range(iterations):
             start_qpu = time.time()
             
-            # Phase 1: Scalarization
-            Q_combined, weights = generate_scalarized_cost_matrix(Q_fuel, Q_time)
+            # Phase 1: Scalarize exactly once, then encode the combined matrix.
+            Q_combined, weights = generate_scalarized_cost_matrix(
+                Q_fuel, Q_time, rng=scalarization_rng
+            )
             
             # Build and execute the locked architecture
-            qc_full = self.reservoir.build_full_architecture(Q_combined, Q_time, n_vehicles)
+            qc_full = self.reservoir.build_architecture_from_scalar(
+                Q_combined, n_vehicles
+            )
             
             if self.reservoir.n_qubits > 20:
                 # OOM prevention: Mocking the feature vector for 27-qubits as classical statevector sim is too expensive
