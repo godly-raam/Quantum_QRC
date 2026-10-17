@@ -453,9 +453,22 @@ class ReservoirVRPSolver:
     3. Adaptation: Traffic jam → Update reservoir → New routes (< 1 second)
     """
     
-    def __init__(self, n_reservoir_qubits: int = 10, trained_params: Optional[np.ndarray] = None):
-        self.reservoir = QuantumReservoir(n_reservoir_qubits, trained_params=trained_params)
+    def __init__(
+        self,
+        n_reservoir_qubits: int = 10,
+        trained_params: Optional[np.ndarray] = None,
+        readout: Optional[Any] = None,
+        legacy_decoder: bool = False,
+        ordering: str = "nn2opt",
+        **reservoir_kwargs: Any,
+    ):
+        self.reservoir = QuantumReservoir(
+            n_reservoir_qubits, trained_params=trained_params, **reservoir_kwargs
+        )
         self.trained = trained_params is not None # FIX: Prevents 500 API crash
+        self.readout = readout
+        self.legacy_decoder = legacy_decoder
+        self.ordering = ordering
         self.consistency_tracker = EmbeddingConsistencyTracker()
         # FIX: Removed self.n_locations and self.n_vehicles to prevent race conditions
         logger.info("🧠 ReservoirVRPSolver initialized")
@@ -503,14 +516,34 @@ class ReservoirVRPSolver:
             qpu_time += (end_qpu - start_qpu)
             
             # Direct mapping from quantum features to route encoding (MO-QAOA feed-forward)
-            expected_len = n_vehicles * n_locations
-            if len(features) >= expected_len:
-                route_encoding = features[:expected_len]
+            if self.readout is not None and not self.legacy_decoder:
+                from modules.readout import readout_assignment
+
+                assignment = readout_assignment(
+                    self.readout, features, n_locations, n_vehicles
+                )
+                routes = self._decode_assignment(
+                    assignment,
+                    n_vehicles,
+                    Q_fuel,
+                    ordering=self.ordering,
+                )
             else:
-                route_encoding = np.pad(features, (0, expected_len - len(features)))
-            
-            # Pass explicit local dimensions to decode
-            routes = self._decode_routes(route_encoding, n_vehicles, n_locations, active_locations=active_locations)
+                expected_len = n_vehicles * n_locations
+                if len(features) >= expected_len:
+                    route_encoding = features[:expected_len]
+                else:
+                    route_encoding = np.pad(features, (0, expected_len - len(features)))
+
+                # Pass explicit local dimensions to decode
+                routes = self._decode_routes(
+                    route_encoding,
+                    n_vehicles,
+                    n_locations,
+                    active_locations=active_locations,
+                    distance_matrix=Q_fuel,
+                    ordering=self.ordering if self.legacy_decoder else "index",
+                )
             
             # Calculate Fuel and Time costs
             fuel_cost = 0.0
@@ -538,7 +571,92 @@ class ReservoirVRPSolver:
         
         return non_dominated, qpu_time
 
-    def _decode_routes(self, encoding: np.ndarray, n_vehicles: int, n_locations: int, active_locations: Optional[int] = None) -> List[List[int]]:
+    def _decode_assignment(
+        self,
+        assignment: np.ndarray,
+        n_vehicles: int,
+        distance_matrix: Optional[np.ndarray],
+        ordering: str = "nn2opt",
+    ) -> List[List[int]]:
+        """Turn one vehicle label per customer into ordered routes."""
+        labels = np.asarray(assignment).astype(int).reshape(-1)
+        n_locations = len(labels) + 1
+        vehicle_stops: Dict[int, List[int]] = {
+            vehicle: [] for vehicle in range(n_vehicles)
+        }
+        for location, vehicle in enumerate(labels, start=1):
+            vehicle_stops[int(vehicle) % n_vehicles].append(location)
+        return self._order_vehicle_stops(
+            vehicle_stops, n_vehicles, distance_matrix, ordering
+        )
+
+    def _order_vehicle_stops(
+        self,
+        vehicle_stops: Dict[int, List[int]],
+        n_vehicles: int,
+        distance_matrix: Optional[np.ndarray],
+        ordering: str,
+    ) -> List[List[int]]:
+        """Order each vehicle's stops with index sort or nearest-neighbour + 2-opt."""
+        if ordering not in ("index", "nn2opt"):
+            raise ValueError("ordering must be 'index' or 'nn2opt'")
+        routes: List[List[int]] = []
+        for vehicle in range(n_vehicles):
+            stops = vehicle_stops.get(vehicle, [])
+            if not stops:
+                continue
+            if ordering == "nn2opt" and distance_matrix is not None:
+                ordered = self._nearest_neighbor(stops, distance_matrix)
+                ordered = self._two_opt(ordered, distance_matrix)
+                routes.append(ordered)
+            else:
+                routes.append([0] + sorted(stops) + [0])
+        return routes
+
+    @staticmethod
+    def _nearest_neighbor(stops: List[int], distance_matrix: np.ndarray) -> List[int]:
+        """Nearest-neighbour tour from the depot."""
+        remaining = set(stops)
+        route = [0]
+        current = 0
+        while remaining:
+            nxt = min(remaining, key=lambda node: (distance_matrix[current, node], node))
+            route.append(nxt)
+            remaining.remove(nxt)
+            current = nxt
+        route.append(0)
+        return route
+
+    @staticmethod
+    def _two_opt(route: List[int], distance_matrix: np.ndarray) -> List[int]:
+        """Improve a closed route with 2-opt until no improving move remains."""
+        route = list(route)
+        improved = True
+        while improved:
+            improved = False
+            length = len(route)
+            for i in range(1, length - 2):
+                for j in range(i + 1, length - 1):
+                    delta = (
+                        distance_matrix[route[i - 1], route[j]]
+                        + distance_matrix[route[i], route[j + 1]]
+                        - distance_matrix[route[i - 1], route[i]]
+                        - distance_matrix[route[j], route[j + 1]]
+                    )
+                    if delta < -1e-12:
+                        route[i : j + 1] = reversed(route[i : j + 1])
+                        improved = True
+        return route
+
+    def _decode_routes(
+        self,
+        encoding: np.ndarray,
+        n_vehicles: int,
+        n_locations: int,
+        active_locations: Optional[int] = None,
+        distance_matrix: Optional[np.ndarray] = None,
+        ordering: str = "nn2opt",
+    ) -> List[List[int]]:
         """
         Decode flat vector back to routes with Repair Logic (Winner-Takes-All).
         
@@ -565,13 +683,9 @@ class ReservoirVRPSolver:
             vehicle_stops[best_vehicle].append(loc)
             
         # 5. Construct final routes
-        routes = []
-        for v in range(n_vehicles):
-            if vehicle_stops[v]:
-                # Basic Polish: Sort locations to minimize "crossing" (simple 1D heuristic)
-                # Ideally, you'd run a quick 2-opt here for true "QEPO", but sort is instant.
-                sorted_stops = sorted(vehicle_stops[v])
-                routes.append([0] + sorted_stops + [0])
+        routes = self._order_vehicle_stops(
+            vehicle_stops, n_vehicles, distance_matrix, ordering
+        )
         
         # 6. Safety Fallback: If absolutely no routes were valid (rare), 
         # assign all jobs to Vehicle 0 to prevent crashes.
@@ -619,15 +733,35 @@ class ReservoirVRPSolver:
         
         # FIX: Do not mutate self. Use local variables.
         n_locations = distance_matrix.shape[0]
-        expected_len = num_vehicles * n_locations
-        
-        if len(features) >= expected_len:
-            route_encoding = features[:expected_len]
+        if self.readout is not None and not self.legacy_decoder:
+            from modules.readout import readout_assignment
+
+            assignment = readout_assignment(
+                self.readout, features, n_locations, num_vehicles
+            )
+            routes = self._decode_assignment(
+                assignment,
+                num_vehicles,
+                distance_matrix,
+                ordering=self.ordering,
+            )
         else:
-            route_encoding = np.pad(features, (0, expected_len - len(features)))
-        
-        # Pass explicit local dimensions
-        routes = self._decode_routes(route_encoding, num_vehicles, n_locations, active_locations=n_locations)
+            expected_len = num_vehicles * n_locations
+
+            if len(features) >= expected_len:
+                route_encoding = features[:expected_len]
+            else:
+                route_encoding = np.pad(features, (0, expected_len - len(features)))
+
+            # Pass explicit local dimensions
+            routes = self._decode_routes(
+                route_encoding,
+                num_vehicles,
+                n_locations,
+                active_locations=n_locations,
+                distance_matrix=distance_matrix,
+                ordering=self.ordering if self.legacy_decoder else "index",
+            )
         
         # Calculate total distance (with traffic)
         adjusted_matrix = distance_matrix * traffic_multipliers
