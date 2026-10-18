@@ -318,7 +318,11 @@ class EchoStateNetwork:
         state = np.tanh(
             self.input_weights @ normalised.ravel() + self.recurrent_weights @ state
         )
-        return np.concatenate((state, state**2, np.tanh(2.0 * state)))
+        adjacent = [
+            state[qubit] * state[qubit + 1]
+            for qubit in range(min(3, self.size - 1))
+        ]
+        return np.concatenate((state, state**2, np.tanh(2.0 * state), adjacent))
 
 
 # ---------------------------------------------------------------------------
@@ -801,6 +805,11 @@ def run_benchmark(args: argparse.Namespace) -> None:
         if size < 2:
             raise ValueError("n_locations must be at least two")
 
+        angle_scale_map = getattr(args, "angle_scale_map", None) or {}
+        size_angle_scale = float(
+            angle_scale_map.get(str(size), angle_scale_map.get(size, args.angle_scale))
+        )
+
         for outer_seed in args.outer_seeds:
             train_instances, test_instances = make_split(
                 outer_seed,
@@ -849,7 +858,7 @@ def run_benchmark(args: argparse.Namespace) -> None:
                 size,
                 build_parameterized_reservoir,
                 trainer_seed,
-                args.angle_scale,
+                size_angle_scale,
                 args.use_depot_diagonal,
                 args.trainer_samples,
                 args.trainer_maxiter,
@@ -858,7 +867,7 @@ def run_benchmark(args: argparse.Namespace) -> None:
                 size,
                 build_shallow_local_reservoir,
                 trainer_seed + 1,
-                args.angle_scale,
+                size_angle_scale,
                 args.use_depot_diagonal,
                 args.trainer_samples,
                 args.trainer_maxiter,
@@ -892,7 +901,7 @@ def run_benchmark(args: argparse.Namespace) -> None:
                         trained_params=params[method],
                         legacy_decoder=False,
                         ordering="nn2opt",
-                        angle_scale=args.angle_scale,
+                        angle_scale=size_angle_scale,
                         use_depot_diagonal=args.use_depot_diagonal,
                         random_seed=outer_seed,
                     )
@@ -902,7 +911,7 @@ def run_benchmark(args: argparse.Namespace) -> None:
                         trained_params=params[method],
                         legacy_decoder=False,
                         ordering="nn2opt",
-                        angle_scale=args.angle_scale,
+                        angle_scale=size_angle_scale,
                         use_depot_diagonal=args.use_depot_diagonal,
                         random_seed=outer_seed,
                         reservoir_builder=build_shallow_local_reservoir,
@@ -914,7 +923,7 @@ def run_benchmark(args: argparse.Namespace) -> None:
                         trained_params=params[method],
                         legacy_decoder=False,
                         ordering="nn2opt",
-                        angle_scale=args.angle_scale,
+                        angle_scale=size_angle_scale,
                         use_depot_diagonal=args.use_depot_diagonal,
                         random_seed=outer_seed,
                     )
@@ -1178,9 +1187,15 @@ def run_encoding_sweep(args: argparse.Namespace) -> None:
     best = {}
     for size in args.sizes:
         size_rows = [row for row in rows if row["n_locations"] == size]
-        if size_rows:
+        required = {1.0, 1.0 / np.sqrt(size), 1.0 / size, 0.25}
+        candidates = [
+            row
+            for row in size_rows
+            if any(abs(row["angle_scale"] - value) < 1e-9 for value in required)
+        ]
+        if candidates:
             best[size] = min(
-                size_rows, key=lambda row: row["validation_route_cost"]
+                candidates, key=lambda row: row["validation_route_cost"]
             )["angle_scale"]
     with open(
         os.path.join(args.output_dir, "encoding_sweep_selection.json"),
@@ -1276,6 +1291,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--readout", choices=("flat", "node"), default="flat")
     parser.add_argument("--ordering", choices=("index", "nn2opt"), default="nn2opt")
     parser.add_argument("--angle-scale", type=float, default=1.0)
+    parser.add_argument(
+        "--angle-scale-map",
+        default=None,
+        help='JSON object mapping size to angle scale, e.g. \'{"4":0.25,"8":1.0}\'',
+    )
     parser.add_argument("--angle-scales", nargs="+", type=float, default=[1.0])
     parser.add_argument("--use-depot-diagonal", action="store_true")
     parser.add_argument(
@@ -1295,6 +1315,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     """Entry point."""
     args = build_parser().parse_args()
+    if args.angle_scale_map is not None:
+        args.angle_scale_map = json.loads(args.angle_scale_map)
     if args.mode == "benchmark":
         run_benchmark(args)
     else:

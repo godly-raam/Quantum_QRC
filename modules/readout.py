@@ -112,13 +112,16 @@ def node_features(features: np.ndarray, n_qubits: int, n_zz: int = 3) -> np.ndar
     rows = []
     for node in range(1, n_qubits):
         base = features[3 * node : 3 * node + 3]
+        offset = 3 * n_qubits
         zz_left = (
-            features[3 * n_qubits + (node - 1)]
-            if node - 1 < n_zz
+            features[offset + (node - 1)]
+            if offset + (node - 1) < len(features) and node - 1 < n_zz
             else 0.0
         )
         zz_right = (
-            features[3 * n_qubits + node] if node < n_zz else 0.0
+            features[offset + node]
+            if offset + node < len(features) and node < n_zz
+            else 0.0
         )
         rows.append(np.concatenate([base, [zz_left, zz_right]]))
     return np.asarray(rows, dtype=float)
