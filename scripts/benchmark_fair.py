@@ -40,10 +40,13 @@ from modules.reservoir_trainer import (  # noqa: E402
     build_shallow_local_reservoir,
     train_reservoir_offline,
 )
+from modules.fast_sim import FeatureCache  # noqa: E402
 
 METHODS = (
     "random_assignment",
     "sweep_assignment",
+    "kmeans_distance",
+    "distance_pair",
     "classical_esn",
     "quantum_ring_trained",
     "quantum_shallow_trained",
@@ -56,6 +59,7 @@ FEATURE_METHODS = (
     "quantum_shallow_trained",
     "quantum_ring_random",
 )
+PAIR_METHODS = FEATURE_METHODS + ("distance_pair",)
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +124,9 @@ def make_split(
     total: int,
     train_count: int,
 ) -> tuple[list[Instance], list[Instance]]:
-    """Build train/test instances; the split is by instance seed/index."""
+    """Build train/test instances; ``total`` is train + test count."""
+    if not 0 <= train_count <= total:
+        raise ValueError("train_count must be between zero and total")
     instances = [
         generate_instance(
             instance_seed(outer_seed, n_locations, index),
@@ -318,11 +324,15 @@ class EchoStateNetwork:
         state = np.tanh(
             self.input_weights @ normalised.ravel() + self.recurrent_weights @ state
         )
-        adjacent = [
-            state[qubit] * state[qubit + 1]
-            for qubit in range(min(3, self.size - 1))
+        from modules.fast_sim import zz_pairs
+
+        correlations = np.outer(state, state)
+        pair_values = [
+            correlations[left, right] for left, right in zz_pairs(self.size)
         ]
-        return np.concatenate((state, state**2, np.tanh(2.0 * state), adjacent))
+        return np.concatenate(
+            (state, state**2, np.tanh(2.0 * state), pair_values)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -331,27 +341,16 @@ class EchoStateNetwork:
 
 
 def measure_observables_fast(statevector: np.ndarray, n_qubits: int) -> np.ndarray:
-    """Measure X/Y/Z on every qubit plus 3 adjacent ZZ terms, without Qiskit."""
-    state = np.asarray(statevector, dtype=complex)
-    indices = np.arange(state.size)
-    probabilities = np.abs(state) ** 2
-    features: list[float] = []
+    """Measure X/Y/Z plus every pairwise ZZ term without Qiskit.
 
-    for qubit in range(n_qubits):
-        flipped = indices ^ (1 << qubit)
-        sign = 1.0 - 2.0 * ((indices >> qubit) & 1)
-        x_value = np.vdot(state, state[flipped])
-        y_value = -1j * np.sum(sign * np.conj(state) * state[flipped])
-        z_value = np.sum(probabilities * sign)
-        features.extend([float(x_value.real), float(y_value.real), float(z_value.real)])
+    The first ``3 * n_qubits + 3`` entries match the legacy observable layout;
+    the remaining entries add all non-adjacent ZZ correlations.  Measuring all
+    pairs costs ``O(n_qubits**2 * 2**n_qubits)`` instead of the legacy
+    ``O((n_qubits + 3) * 2**n_qubits)``.
+    """
+    from modules.fast_sim import measure_features
 
-    for qubit in range(min(3, n_qubits - 1)):
-        left = (indices >> qubit) & 1
-        right = (indices >> (qubit + 1)) & 1
-        same = 1.0 - 2.0 * np.abs(left - right)
-        features.append(float(np.sum(probabilities * same)))
-
-    return np.asarray(features, dtype=float)
+    return measure_features(statevector, n_qubits)
 
 
 def quantum_features(
@@ -440,6 +439,77 @@ def node_feature_rows(
     return np.vstack([node_features(row, n_qubits) for row in features])
 
 
+def pair_feature_rows(
+    method: str,
+    features: np.ndarray,
+    n_locations: int,
+) -> np.ndarray:
+    """Build pairwise readout rows for a reservoir or distance-only feature."""
+    from modules.readout import (
+        pair_feature_matrix,
+        reservoir_pair_components,
+    )
+
+    if method == "distance_pair":
+        return pair_feature_matrix(features, n_locations)
+    observables, zz_matrix = reservoir_pair_components(features, n_locations)
+    return pair_feature_matrix(observables, n_locations, zz_matrix)
+
+
+def fit_pair_readout(
+    method: str,
+    train_features: Sequence[np.ndarray],
+    train_routes: Sequence[Sequence[Sequence[int]]],
+    n_locations: int,
+    n_vehicles: int,
+    seed: int,
+    alphas: Sequence[float],
+):
+    """Fit the label-free pairwise ridge readout on co-assignment targets."""
+    from modules.readout import RidgeReadout, pair_targets_from_routes
+
+    feature_rows = np.vstack(
+        [
+            pair_feature_rows(method, features, n_locations)
+            for features in train_features
+        ]
+    )
+    targets = np.vstack(
+        [
+            pair_targets_from_routes(routes, n_locations)[:, None]
+            for routes in train_routes
+        ]
+    )
+    readout = RidgeReadout(
+        mode="pair",
+        alphas=tuple(alphas),
+        cv_folds=5,
+        seed=seed,
+    )
+    return readout.fit(feature_rows, targets)
+
+
+def predict_pair_assignment(
+    readout,
+    method: str,
+    features: np.ndarray,
+    n_locations: int,
+    n_vehicles: int,
+) -> np.ndarray:
+    """Predict pair similarities, cluster them, and return vehicle labels."""
+    from modules.readout import cluster_similarity, customer_pairs
+
+    rows = pair_feature_rows(method, features, n_locations)
+    values = np.asarray(readout.predict(rows), dtype=float).reshape(-1)
+    n_customers = n_locations - 1
+    similarity = np.zeros((n_customers, n_customers), dtype=float)
+    for (left, right), value in zip(customer_pairs(n_locations), values):
+        similarity[left - 1, right - 1] = value
+        similarity[right - 1, left - 1] = value
+    np.fill_diagonal(similarity, 1.0)
+    return cluster_similarity(similarity, n_vehicles)
+
+
 def fit_readout(
     method: str,
     train_features: Sequence[np.ndarray],
@@ -520,15 +590,41 @@ def _lcu_theta(n_qubits: int, n_vehicles: int, seed: int) -> float:
     )
 
 
+def _quantum_theta_hash(
+    reservoir: QuantumReservoir, outer_seed: int
+) -> str:
+    """Hash every setting that changes the quantum feature vector."""
+    from modules.fast_sim import array_hash, feature_config_hash
+
+    builder = getattr(reservoir.reservoir_builder, "__name__", "default")
+    payload = json.dumps(
+        {
+            "version": "v2-allzz",
+            "seed": getattr(reservoir, "random_seed", None),
+            "params": array_hash(reservoir.trained_params),
+            "layers": reservoir.reservoir_layers,
+            "builder": builder,
+            "angle_scale": reservoir.angle_scale,
+            "depot_diagonal": reservoir.use_depot_diagonal,
+            "outer_seed": outer_seed,
+        },
+        sort_keys=True,
+    )
+    return feature_config_hash(payload)
+
+
 def _collect_quantum_features(
     reservoir: QuantumReservoir,
     instances: Sequence[Instance],
     n_vehicles: int,
     outer_seed: int,
     timing: bool,
+    cache: Optional[FeatureCache] = None,
 ) -> tuple[list[np.ndarray], list[float]]:
     features = []
     times = []
+    theta_hash = _quantum_theta_hash(reservoir, outer_seed)
+    angle_scale = reservoir.angle_scale
     for instance in instances:
         started = time.perf_counter()
         theta = _lcu_theta(
@@ -536,40 +632,88 @@ def _collect_quantum_features(
             n_vehicles,
             instance.seed + outer_seed,
         )
-        feature_vector = quantum_features(
-            reservoir, instance.distances, n_vehicles, theta
-        )
+
+        def compute() -> np.ndarray:
+            return quantum_features(reservoir, instance.distances, n_vehicles, theta)
+
+        if cache is None:
+            feature_vector = compute()
+        else:
+            feature_vector = cache.get_or_compute(
+                instance.n_locations,
+                instance.seed,
+                angle_scale,
+                theta_hash,
+                compute,
+            )
         elapsed = time.perf_counter() - started
         features.append(feature_vector)
         times.append(elapsed)
+    if cache is not None:
+        cache.flush()
     return features, times
 
 
 def _collect_esn_features(
-    esn: EchoStateNetwork, instances: Sequence[Instance], timing: bool
+    esn: EchoStateNetwork,
+    instances: Sequence[Instance],
+    timing: bool,
+    cache: Optional[FeatureCache] = None,
+    seed: int = 0,
 ) -> tuple[list[np.ndarray], list[float]]:
     features = []
     times = []
+    theta_hash = f"esn:{seed}:{esn.size}:{esn.input_dim}"
     for instance in instances:
         started = time.perf_counter()
-        feature_vector = esn.features(instance.distances)
+        if cache is None:
+            feature_vector = esn.features(instance.distances)
+        else:
+            feature_vector = cache.get_or_compute(
+                instance.n_locations,
+                instance.seed,
+                0.0,
+                theta_hash,
+                lambda: esn.features(instance.distances),
+            )
         elapsed = time.perf_counter() - started
         features.append(feature_vector)
         times.append(elapsed)
+    if cache is not None:
+        cache.flush()
     return features, times
+
+
+def kmeans_assignment(
+    instance: Instance, n_vehicles: int, seed: int
+) -> np.ndarray:
+    """K-means control over distance-only customer features."""
+    from sklearn.cluster import KMeans
+
+    from modules.readout import distance_node_features
+
+    features = distance_node_features(instance.distances)[1:]
+    n_clusters = min(n_vehicles, len(features))
+    model = KMeans(
+        n_clusters=n_clusters,
+        n_init=10,
+        random_state=seed,
+    )
+    return model.fit_predict(features).astype(int)
 
 
 def evaluate_method(
     method: str,
     solver: ReservoirVRPSolver,
     instances: Sequence[Instance],
-    train_assignment: Sequence[np.ndarray],
+    train_routes: Sequence[Sequence[Sequence[int]]],
     n_vehicles: int,
     seed: int,
     alphas: Sequence[float],
     readout_mode: str,
     ordering: str,
     train_instances: Optional[Sequence[Instance]] = None,
+    cache: Optional[FeatureCache] = None,
     legacy_diagnostics: bool = False,
 ) -> tuple[list[dict], dict]:
     """Train (if needed) and evaluate one method on the test instances."""
@@ -579,22 +723,57 @@ def evaluate_method(
     test_feature_times: list[float]
     readout = None
 
-    if method in FEATURE_METHODS:
+    if method in FEATURE_METHODS or method == "distance_pair":
         train_features, _ = _method_features(
-            method, solver, train_instances, n_vehicles, seed, timing=False
-        )
-        readout = fit_readout(
             method,
-            train_features,
-            train_assignment,
-            instances[0].n_locations,
+            solver,
+            train_instances,
             n_vehicles,
-            readout_mode,
             seed,
-            alphas,
+            timing=False,
+            cache=cache,
         )
+        if readout_mode == "pair":
+            readout = fit_pair_readout(
+                method,
+                train_features,
+                train_routes,
+                instances[0].n_locations,
+                n_vehicles,
+                seed,
+                alphas,
+            )
+        else:
+            from modules.readout import routes_to_assignment
+
+            train_assignment = [
+                routes_to_assignment(
+                    canonicalize_routes(
+                        routes, instance.coordinates, n_vehicles
+                    ),
+                    instance.n_locations,
+                    n_vehicles,
+                )
+                for routes, instance in zip(train_routes, train_instances)
+            ]
+            readout = fit_readout(
+                method,
+                train_features,
+                train_assignment,
+                instances[0].n_locations,
+                n_vehicles,
+                readout_mode,
+                seed,
+                alphas,
+            )
         test_features, test_feature_times = _method_features(
-            method, solver, instances, n_vehicles, seed, timing=True
+            method,
+            solver,
+            instances,
+            n_vehicles,
+            seed,
+            timing=True,
+            cache=cache,
         )
     else:
         test_features = []
@@ -609,14 +788,25 @@ def evaluate_method(
             assignment = random_assignment(instance, n_vehicles, rng)
         elif method == "sweep_assignment":
             assignment = sweep_assignment(instance, n_vehicles)
-        elif method in FEATURE_METHODS:
-            assignment = predict_assignment(
-                readout,
-                test_features[index],
-                instance.n_locations,
-                n_vehicles,
-                readout_mode,
-            )
+        elif method == "kmeans_distance":
+            assignment = kmeans_assignment(instance, n_vehicles, seed + index)
+        elif method in FEATURE_METHODS or method == "distance_pair":
+            if readout_mode == "pair":
+                assignment = predict_pair_assignment(
+                    readout,
+                    method,
+                    test_features[index],
+                    instance.n_locations,
+                    n_vehicles,
+                )
+            else:
+                assignment = predict_assignment(
+                    readout,
+                    test_features[index],
+                    instance.n_locations,
+                    n_vehicles,
+                    readout_mode,
+                )
         else:
             raise ValueError(f"Unknown method {method}")
 
@@ -629,6 +819,7 @@ def evaluate_method(
             )
             route_cost_index = route_cost(index_routes, instance.distances)
         elapsed = time.perf_counter() - started + test_feature_times[index]
+        has_features = method in FEATURE_METHODS or method == "distance_pair"
         rows.append(
             {
                 "method": method,
@@ -636,15 +827,19 @@ def evaluate_method(
                 "cost_index": route_cost_index,
                 "time": elapsed,
                 "feature_variance": float(np.var(test_features[index]))
-                if method in FEATURE_METHODS
+                if has_features
                 else float("nan"),
                 "feature_mean_abs": float(np.mean(np.abs(test_features[index])))
-                if method in FEATURE_METHODS
+                if has_features
                 else float("nan"),
             }
         )
 
-    if legacy_diagnostics and method == "quantum_ring_trained":
+    if (
+        legacy_diagnostics
+        and method == "quantum_ring_trained"
+        and readout_mode != "pair"
+    ):
         legacy_costs = []
         trained_index_costs = []
         for index, instance in enumerate(instances):
@@ -689,8 +884,18 @@ def _method_features(
     n_vehicles: int,
     seed: int,
     timing: bool,
+    cache: Optional[FeatureCache] = None,
 ) -> tuple[list[np.ndarray], list[float]]:
     """Extract features for a feature-based method."""
+    if method == "distance_pair":
+        from modules.readout import distance_node_features
+
+        started = time.perf_counter()
+        features = [
+            distance_node_features(instance.distances) for instance in instances
+        ]
+        elapsed = (time.perf_counter() - started) / max(1, len(instances))
+        return features, [elapsed] * len(instances)
     if method == "classical_esn":
         esn = getattr(solver, "_benchmark_esn", None)
         if esn is None:
@@ -700,9 +905,9 @@ def _method_features(
                 seed=seed,
             )
             solver._benchmark_esn = esn  # type: ignore[attr-defined]
-        return _collect_esn_features(esn, instances, timing)
+        return _collect_esn_features(esn, instances, timing, cache, seed)
     return _collect_quantum_features(
-        solver.reservoir, instances, n_vehicles, seed, timing
+        solver.reservoir, instances, n_vehicles, seed, timing, cache
     )
 
 
@@ -790,6 +995,48 @@ def write_csv(path: str, rows: Sequence[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _checkpoint_path(output_dir: str, size: int, outer_seed: int) -> str:
+    return os.path.join(
+        output_dir, "checkpoints", f"size{size}_seed{outer_seed}.json"
+    )
+
+
+def _load_checkpoint(
+    path: str, methods: Sequence[str]
+) -> Optional[tuple[list[dict], list[dict]]]:
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if not set(methods).issubset(set(payload.get("methods", []))):
+            return None
+        return payload.get("rows", []), payload.get("diagnostics", [])
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _save_checkpoint(
+    path: str,
+    methods: Sequence[str],
+    rows: Sequence[dict],
+    diagnostics: Sequence[dict],
+) -> None:
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    temporary = f"{path}.tmp.{os.getpid()}"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "methods": list(methods),
+                "rows": list(rows),
+                "diagnostics": list(diagnostics),
+            },
+            handle,
+            sort_keys=True,
+        )
+    os.replace(temporary, path)
+
+
 def run_benchmark(args: argparse.Namespace) -> None:
     """Run the full fair benchmark and write CSV/markdown outputs."""
     os.makedirs(args.output_dir, exist_ok=True)
@@ -798,6 +1045,11 @@ def run_benchmark(args: argparse.Namespace) -> None:
     comparison_rows: list[dict] = []
     diagnostic_rows: list[dict] = []
     paired_costs: dict[tuple[int, str], list[float]] = {}
+    methods = tuple(getattr(args, "methods", METHODS))
+    cache = FeatureCache(
+        getattr(args, "cache_dir", None)
+        or os.path.join(args.output_dir, "feature_cache")
+    )
 
     for size in args.sizes:
         if size > 20:
@@ -811,10 +1063,26 @@ def run_benchmark(args: argparse.Namespace) -> None:
         )
 
         for outer_seed in args.outer_seeds:
+            checkpoint_path = _checkpoint_path(
+                args.output_dir, size, outer_seed
+            )
+            cached_checkpoint = _load_checkpoint(checkpoint_path, methods)
+            if cached_checkpoint is not None:
+                cached_rows, cached_diagnostics = cached_checkpoint
+                run_rows.extend(cached_rows)
+                diagnostic_rows.extend(cached_diagnostics)
+                print(
+                    f"resumed size={size} outer_seed={outer_seed} "
+                    f"from {checkpoint_path}"
+                )
+                continue
+
+            combo_row_start = len(run_rows)
+            combo_diagnostic_start = len(diagnostic_rows)
             train_instances, test_instances = make_split(
                 outer_seed,
                 size,
-                args.per_size,
+                args.per_size + args.train_per_size,
                 args.train_per_size,
             )
             all_instances = list(train_instances) + list(test_instances)
@@ -847,10 +1115,7 @@ def run_benchmark(args: argparse.Namespace) -> None:
                 latency_costs.append(latency_cost)
                 latency_times.append(latency_elapsed)
 
-            assignments = canonical_assignments(
-                reference_routes, all_instances, args.vehicles
-            )
-            train_assignments = assignments[: len(train_instances)]
+            train_routes = reference_routes[: len(train_instances)]
 
             trainer_seed = args.trainer_seed_base + outer_seed
             params = {}
@@ -880,15 +1145,14 @@ def run_benchmark(args: argparse.Namespace) -> None:
                 0.0, 2.0 * np.pi, size * ring_layers
             )
 
-            for method in METHODS:
-                if method in ("random_assignment", "sweep_assignment"):
-                    solver = ReservoirVRPSolver(
-                        n_reservoir_qubits=size,
-                        trained_params=None,
-                        legacy_decoder=False,
-                        ordering="nn2opt",
-                    )
-                elif method == "classical_esn":
+            for method in methods:
+                if method in (
+                    "random_assignment",
+                    "sweep_assignment",
+                    "kmeans_distance",
+                    "distance_pair",
+                    "classical_esn",
+                ):
                     solver = ReservoirVRPSolver(
                         n_reservoir_qubits=size,
                         trained_params=None,
@@ -964,13 +1228,14 @@ def run_benchmark(args: argparse.Namespace) -> None:
                     method,
                     solver,
                     test_instances,
-                    train_assignments,
+                    train_routes,
                     args.vehicles,
                     seed=outer_seed * 10_000 + size,
                     alphas=args.alphas,
                     readout_mode=args.readout,
                     ordering=args.ordering,
                     train_instances=train_instances,
+                    cache=cache,
                     legacy_diagnostics=(method == "quantum_ring_trained"),
                 )
                 if diagnostics:
@@ -1006,12 +1271,18 @@ def run_benchmark(args: argparse.Namespace) -> None:
                         row["cost"] - reference_cost
                     )
 
+            _save_checkpoint(
+                checkpoint_path,
+                methods,
+                run_rows[combo_row_start:],
+                diagnostic_rows[combo_diagnostic_start:],
+            )
             print(
                 f"completed size={size} outer_seed={outer_seed} "
                 f"({len(test_instances)} test instances)"
             )
 
-        for method in METHODS:
+        for method in methods:
             method_rows = [
                 row
                 for row in run_rows
@@ -1039,19 +1310,23 @@ def run_benchmark(args: argparse.Namespace) -> None:
             )
 
     pair_definitions = (
+        ("distance_pair", "random_assignment"),
+        ("distance_pair", "sweep_assignment"),
+        ("distance_pair", "kmeans_distance"),
+        ("classical_esn", "distance_pair"),
+        ("quantum_ring_trained", "distance_pair"),
         ("quantum_ring_trained", "classical_esn"),
         ("quantum_shallow_trained", "classical_esn"),
         ("quantum_ring_trained", "quantum_ring_random"),
         ("quantum_ring_trained", "random_assignment"),
         ("quantum_ring_trained", "sweep_assignment"),
         ("quantum_ring_trained", "ortools_0.1s"),
-        ("classical_esn", "sweep_assignment"),
-        ("sweep_assignment", "random_assignment"),
+        ("kmeans_distance", "random_assignment"),
         ("ortools_0.1s", "ortools_1s"),
     )
     for size in args.sizes:
         cost_lookup: dict[str, dict[int, float]] = {}
-        for method in METHODS:
+        for method in methods:
             cost_lookup[method] = {
                 row["instance_seed"]: row["cost"]
                 for row in run_rows
@@ -1121,7 +1396,10 @@ def run_encoding_sweep(args: argparse.Namespace) -> None:
     for size in args.sizes:
         outer_seed = args.outer_seeds[0]
         train_instances, test_instances = make_split(
-            outer_seed, size, args.per_size, args.train_per_size
+            outer_seed,
+            size,
+            args.per_size + args.train_per_size,
+            args.train_per_size,
         )
         reference_routes = []
         for index, instance in enumerate(train_instances):
@@ -1288,7 +1566,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--outer-seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4])
     parser.add_argument("--ortools-seconds", type=float, default=1.0)
     parser.add_argument("--ortools-latency-seconds", type=float, default=0.1)
-    parser.add_argument("--readout", choices=("flat", "node"), default="flat")
+    parser.add_argument(
+        "--readout", choices=("pair", "flat", "node"), default="pair"
+    )
+    parser.add_argument(
+        "--methods", nargs="+", choices=METHODS, default=list(METHODS)
+    )
     parser.add_argument("--ordering", choices=("index", "nn2opt"), default="nn2opt")
     parser.add_argument("--angle-scale", type=float, default=1.0)
     parser.add_argument(
@@ -1308,6 +1591,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reservoir-seed-base", type=int, default=2000)
     parser.add_argument("--trainer-samples", type=int, default=20)
     parser.add_argument("--trainer-maxiter", type=int, default=100)
+    parser.add_argument(
+        "--cache-dir",
+        default=None,
+        help="Feature cache directory (default: <output-dir>/feature_cache)",
+    )
     parser.add_argument("--output-dir", default=os.path.join(PROJECT_ROOT, "results"))
     return parser
 

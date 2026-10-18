@@ -238,6 +238,7 @@ class QuantumReservoir:
         """
         self.n_qubits = n_reservoir_qubits
         self.coupling = coupling_strength
+        self.random_seed = random_seed
         self.dim = 2 ** n_reservoir_qubits
         self.trained_params = trained_params
         self.reservoir_layers = reservoir_layers

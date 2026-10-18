@@ -1,22 +1,11 @@
 """Trained classical readouts for quantum/classical reservoir features.
 
-The readout predicts a vehicle assignment for every customer.  Vehicle labels
-are canonicalised before training: routes are ordered by the polar angle of
-their customer centroid around the depot.  This removes the label permutation
-symmetry that otherwise makes the same routing solution look different from
-run to run.
-
-Two feature layouts are supported by the benchmark:
-
-``flat``
-    One global feature vector per instance -> ``n_vehicles * (n_locations - 1)``
-    logits (customer-major).
-
-``node``
-    One feature vector per customer -> ``n_vehicles`` logits.  Weights are
-    shared across customers.
-
-Both use the same ridge objective and cross-validated regularisation.
+The primary target is label-free: for every customer pair ``(i, j)`` the
+target is 1 when both customers share an OR-Tools route and 0 otherwise.  This
+is invariant to vehicle relabelling and to rigid motions of the instance.  A
+ridge model predicts pair similarity, and agglomerative clustering turns the
+similarity matrix into vehicle groups.  The old ``flat`` and ``node`` one-hot
+readouts remain available only as legacy baselines.
 """
 
 from __future__ import annotations
@@ -99,6 +88,142 @@ def readout_assignment(
         return np.argmax(readout.predict(rows), axis=1)
     logits = readout.predict(np.asarray(features, dtype=float).reshape(1, -1))
     return assignments_from_logits(logits.reshape(-1), n_locations, n_vehicles)
+
+
+def customer_pairs(n_locations: int) -> list[tuple[int, int]]:
+    """Return customer pairs in a stable row-major order."""
+    return [
+        (left, right)
+        for left in range(1, n_locations)
+        for right in range(left + 1, n_locations)
+    ]
+
+
+def pair_targets_from_routes(
+    routes: Sequence[Sequence[int]], n_locations: int
+) -> np.ndarray:
+    """Label-free co-assignment targets for every customer pair.
+
+    ``y_ij = 1`` when customers ``i`` and ``j`` are on the same route.  The
+    result does not depend on vehicle order, route orientation, or the
+    coordinates used to produce the routes.
+    """
+    vehicle_of: dict[int, int] = {}
+    for vehicle, route in enumerate(routes):
+        for stop in route:
+            if 1 <= int(stop) < n_locations:
+                vehicle_of[int(stop)] = vehicle
+    targets = []
+    for left, right in customer_pairs(n_locations):
+        left_vehicle = vehicle_of.get(left, -1)
+        right_vehicle = vehicle_of.get(right, -1)
+        targets.append(
+            1.0
+            if left_vehicle >= 0 and left_vehicle == right_vehicle
+            else 0.0
+        )
+    return np.asarray(targets, dtype=float)
+
+
+def reservoir_pair_components(
+    features: np.ndarray, n_qubits: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Split a reservoir feature vector into node observables and a ZZ matrix.
+
+    Missing pairwise entries (for example in a legacy feature vector that only
+    contains three ZZ terms) are left as zero.
+    """
+    from modules.fast_sim import zz_pair_index
+
+    features = np.asarray(features, dtype=float)
+    required = 3 * n_qubits
+    if len(features) < required:
+        features = np.pad(features, (0, required - len(features)))
+    observables = features[:required].reshape(n_qubits, 3)
+    zz_matrix = np.zeros((n_qubits, n_qubits), dtype=float)
+    for (left, right), position in zz_pair_index(n_qubits).items():
+        if position < len(features):
+            zz_matrix[left, right] = features[position]
+            zz_matrix[right, left] = features[position]
+    return observables, zz_matrix
+
+
+def distance_node_features(distances: np.ndarray) -> np.ndarray:
+    """Distance-only control features: sorted row plus depot distance."""
+    distances = np.asarray(distances, dtype=float)
+    n_locations = distances.shape[0]
+    depot_distances = distances[0]
+    rows = []
+    for node in range(n_locations):
+        row = np.sort(np.delete(distances[node], node))
+        rows.append(np.concatenate([row, [depot_distances[node]]]))
+    return np.asarray(rows, dtype=float)
+
+
+def pair_feature_matrix(
+    node_features: np.ndarray,
+    n_locations: int,
+    zz_matrix: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Build symmetric pair features for all customer pairs.
+
+    Reservoir pairs use ``[f_i + f_j, |f_i - f_j|, ZZ_ij]``.  The distance-only
+    control omits ``ZZ_ij`` because it has no quantum correlations.
+    """
+    node_features = np.asarray(node_features, dtype=float)
+    rows = []
+    for left, right in customer_pairs(n_locations):
+        parts = [
+            node_features[left] + node_features[right],
+            np.abs(node_features[left] - node_features[right]),
+        ]
+        if zz_matrix is not None:
+            parts.append(np.asarray([zz_matrix[left, right]], dtype=float))
+        rows.append(np.concatenate(parts))
+    return np.vstack(rows)
+
+
+def cluster_similarity(similarity: np.ndarray, n_clusters: int) -> np.ndarray:
+    """Agglomerative clustering of a similarity matrix.
+
+    Each customer starts in its own cluster; the pair of clusters with the
+    highest average similarity is merged until ``n_clusters`` groups remain.
+    Every customer receives exactly one label.
+    """
+    similarity = np.asarray(similarity, dtype=float)
+    n_customers = similarity.shape[0]
+    if similarity.shape != (n_customers, n_customers):
+        raise ValueError("similarity must be square")
+    if n_clusters <= 0:
+        raise ValueError("n_clusters must be positive")
+    if n_customers == 0:
+        return np.empty(0, dtype=int)
+
+    clusters: list[list[int]] = [[index] for index in range(n_customers)]
+    target = min(int(n_clusters), n_customers)
+    while len(clusters) > target:
+        best_pair = (0, 1)
+        best_score = -np.inf
+        for left in range(len(clusters)):
+            for right in range(left + 1, len(clusters)):
+                score = float(
+                    np.mean(
+                        similarity[
+                            np.ix_(clusters[left], clusters[right])
+                        ]
+                    )
+                )
+                if score > best_score + 1e-15:
+                    best_score = score
+                    best_pair = (left, right)
+        left, right = best_pair
+        clusters[left].extend(clusters[right])
+        clusters.pop(right)
+
+    labels = np.empty(n_customers, dtype=int)
+    for label, cluster in enumerate(clusters):
+        labels[cluster] = label
+    return labels
 
 
 def node_features(features: np.ndarray, n_qubits: int, n_zz: int = 3) -> np.ndarray:

@@ -143,7 +143,8 @@ def test_fast_observable_measurement_matches_qiskit() -> None:
     state /= np.linalg.norm(state)
     fast = measure_observables_fast(state, n_qubits)
     qiskit = reservoir.measure_observables(state)
-    assert np.allclose(fast, qiskit, atol=1e-12)
+    assert np.allclose(fast[: len(qiskit)], qiskit, atol=1e-12)
+    assert len(fast) == 3 * n_qubits + n_qubits * (n_qubits - 1) // 2
 
 
 def test_quantum_features_are_seeded() -> None:
