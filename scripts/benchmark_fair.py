@@ -324,15 +324,17 @@ class EchoStateNetwork:
         state = np.tanh(
             self.input_weights @ normalised.ravel() + self.recurrent_weights @ state
         )
+        self.last_state = state
         from modules.fast_sim import zz_pairs
 
         correlations = np.outer(state, state)
         pair_values = [
             correlations[left, right] for left, right in zz_pairs(self.size)
         ]
-        return np.concatenate(
-            (state, state**2, np.tanh(2.0 * state), pair_values)
-        )
+        observables = np.stack(
+            (state, state**2, np.tanh(2.0 * state)), axis=1
+        ).reshape(-1)
+        return np.concatenate((observables, pair_values))
 
 
 # ---------------------------------------------------------------------------
@@ -663,7 +665,7 @@ def _collect_esn_features(
 ) -> tuple[list[np.ndarray], list[float]]:
     features = []
     times = []
-    theta_hash = f"esn:{seed}:{esn.size}:{esn.input_dim}"
+    theta_hash = f"esn-v2:{seed}:{esn.size}:{esn.input_dim}"
     for instance in instances:
         started = time.perf_counter()
         if cache is None:
