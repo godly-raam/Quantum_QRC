@@ -44,3 +44,6 @@ build/
 data/
 
 
+
+# Rebuildable benchmark feature cache (archived in results/feature_cache.tar.gz)
+results/feature_cache/
