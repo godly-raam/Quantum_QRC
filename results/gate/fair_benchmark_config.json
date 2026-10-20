@@ -1,0 +1,49 @@
+{
+  "alphas": [
+    1e-08,
+    1e-06,
+    0.0001,
+    0.01,
+    1.0,
+    10.0,
+    100.0
+  ],
+  "angle_scale": 1.0,
+  "angle_scale_map": null,
+  "angle_scales": [
+    1.0
+  ],
+  "cache_dir": "results/feature_cache",
+  "methods": [
+    "random_assignment",
+    "distance_pair",
+    "classical_esn",
+    "quantum_ring_trained",
+    "quantum_shallow_trained",
+    "quantum_ring_random"
+  ],
+  "mode": "benchmark",
+  "ordering": "nn2opt",
+  "ortools_latency_seconds": 0.1,
+  "ortools_seconds": 1.0,
+  "outer_seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "output_dir": "results/gate",
+  "per_size": 250,
+  "readout": "pair",
+  "reservoir_seed_base": 2000,
+  "sizes": [
+    8
+  ],
+  "train_per_size": 200,
+  "trainer_maxiter": 100,
+  "trainer_samples": 20,
+  "trainer_seed_base": 1000,
+  "use_depot_diagonal": false,
+  "vehicles": 4
+}
