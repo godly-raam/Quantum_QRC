@@ -195,3 +195,27 @@ class FeatureCache:
             )
             os.replace(temporary, path)
         self._dirty.clear()
+
+
+def statevector_from_circuit(circuit, prefer_aer: bool = True) -> np.ndarray:
+    """Return a circuit statevector, using Aer when available.
+
+    Aer's statevector simulator is several times faster than
+    ``Statevector.from_instruction`` for 16-qubit circuits.  Any Aer failure
+    falls back to the Qiskit reference path so the benchmark never depends on
+    the optional accelerator for correctness.
+    """
+    if prefer_aer:
+        try:
+            from qiskit_aer import AerSimulator
+
+            saved = circuit.copy()
+            saved.save_statevector()
+            result = AerSimulator(method="statevector").run(saved).result()
+            return np.asarray(result.get_statevector(saved), dtype=complex)
+        except Exception:  # pragma: no cover - exercised by fallback tests
+            pass
+
+    from qiskit.quantum_info import Statevector
+
+    return np.asarray(Statevector.from_instruction(circuit).data, dtype=complex)

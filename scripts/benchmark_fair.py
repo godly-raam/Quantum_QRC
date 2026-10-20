@@ -26,7 +26,6 @@ from itertools import pairwise
 from typing import Callable, Iterable, Optional, Sequence
 
 import numpy as np
-from qiskit.quantum_info import Statevector
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(PROJECT_ROOT)
@@ -362,10 +361,12 @@ def quantum_features(
     lcu_theta: float,
 ) -> np.ndarray:
     """Run the feature map, LCU layer, and reservoir, then measure features."""
+    from modules.fast_sim import statevector_from_circuit
+
     circuit = reservoir.build_architecture_from_scalar(
         distances, n_vehicles, lcu_theta=lcu_theta
     )
-    state = Statevector.from_instruction(circuit).data
+    state = statevector_from_circuit(circuit)
     reservoir.current_state = state / np.linalg.norm(state)
     return measure_observables_fast(reservoir.current_state, reservoir.n_qubits)
 
