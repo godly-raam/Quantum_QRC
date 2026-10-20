@@ -7,6 +7,7 @@ This project investigates whether a fixed-parameter quantum reservoir provides a
 - On a QOBLIB VRP instance, the quantum-reservoir solver trades solution quality for adaptation speed (139% optimality gap vs. a classical baseline, but sub-second re-routing) — see the Benchmark Results section. QOBLIB's own authors note that current VRP instances in their library are solvable to classical optimality, so this result should be read as a latency benchmark, not a quantum-advantage claim.
 - On QOBLIB's Independent Set problem class (a class the benchmark's authors specifically flag as near-term quantum-amenable), we report a direct comparison against IBM's published QAOA baseline on the same instance — see the Independent Set Benchmark section.
 - A controlled ablation against a classical Echo State Network of matched size found the quantum reservoir performs worse on route cost at every size tested, and its expressivity collapses as qubit count grows — consistent with the barren plateau phenomenon — see the Classical Reservoir Ablation section.
+- In the label-free pairwise benchmark, no reservoir method beat a simple distance-based baseline. At 12 qubits the quantum reservoir beat the random assignment and the matched ESN, but remained far behind sweep, k-means, and distance-pair baselines — see the Fair Label-Free Pairwise Benchmark section.
 
 We have not yet found a result in which this architecture outperforms a matched classical baseline. We're documenting this openly because we think the negative results, and the process of catching and fixing the bugs that produced misleading earlier numbers, are as useful a record of the work as a positive result would have been. Real quantum-hardware execution (beyond classical simulation) is the next open step — see "Next Steps" below.
 
@@ -109,7 +110,69 @@ The following disclosure follows [QOBLIB's submission schema](https://github.com
 
 **Note on the live `/api/optimize` endpoint's classical-fallback path:** Prior to 2026-08-06, the QAOA branch used by this endpoint when QRC is unavailable, untrained, or rejects a problem as too large (`modules/quantum_solver.py`) failed silently due to a Qiskit Aer Sampler/SamplerV2 API incompatibility, and transparently fell back to an OR-Tools route on every call — correctly reporting `IS_QUANTUM=False` in each case, so no result was ever mislabeled as quantum. This affected only this specific endpoint branch; it did not affect the QOBLIB benchmark results documented above, the Independent Set benchmark, or the classical reservoir ablation, none of which import `modules/quantum_solver.py` (see commit `5aeff470` for the fix and verification).
 
+## Fair Label-Free Pairwise Benchmark
+
+The earlier ablations used a flat/node readout trained on route-centroid angles. Those labels depend on absolute coordinates, so a readout can recover geometry without learning a route-invariant assignment. The benchmark below replaces that target with a pairwise co-assignment label: two customers are positive if and only if OR-Tools puts them on the same route. This target is invariant to vehicle permutation and rigid motion, and the reservoir pair features contain no explicit customer-to-customer distance term; any distance information reaches them only through the fixed encoding.
+
+Design: synthetic capacitated VRP instances with `n_locations == n_qubits`, four vehicles, and a capacity that requires roughly all four vehicles; 200 training and 250 test instances per outer seed; five outer seeds per size; identical `nn2opt` decoder for every method; paired bootstrap 95% CIs over the 1,250 test runs per size. The reference is OR-Tools with a 1 s time limit. N=4 is excluded because it has only three customers for four vehicles. Raw runs and comparisons are in `results/aggregate/`.
+
+| Size (qubits) | Seeds | random | sweep | k-means | distance-pair | ESN | ring random | ring trained | shallow trained |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 6 | 5 | 4.5913 | 4.6083 | 4.5451 | **4.5011** | 4.6095 | 4.6164 | 4.6237 | 4.6325 |
+| 8 | 5 | 5.6240 | 5.3744 | 5.3596 | **5.2883** | 5.6545 | 5.6454 | 5.6330 | 5.6155 |
+| 10 | 5 | 6.4711 | 5.9269 | 5.9421 | **5.9246** | 6.4161 | 6.3807 | 6.3779 | 6.3929 |
+| 12 | 5 | 7.1301 | **6.2668** | 6.4395 | 6.5077 | 7.0720 | 6.9987 | 6.9706 | 6.9910 |
+| 16 (provisional) | 1 | 8.2218 | **6.7291** | 7.2706 | 7.3985 | 8.1284 | 7.9646 | 7.9596 | 8.0066 |
+
+Mean route cost, lower is better. N=16 has only seed 0 and is not used for any claim.
+
+Key paired differences (quantum and best classical methods):
+
+| Size | Comparison | Mean difference | 95% CI | Excludes 0 |
+|---:|---|---:|---|---|
+| 6 | ring trained − random | +0.0323 | [+0.0104, +0.0546] | yes (worse) |
+| 8 | ring trained − random | +0.0089 | [−0.0208, +0.0419] | no |
+| 8 | ring trained − ESN | −0.0215 | [−0.0516, +0.0088] | no |
+| 8 | distance-pair − ring trained | −0.3447 | [−0.3781, −0.3112] | yes |
+| 8 | sweep − ring trained | −0.2586 | [−0.2894, −0.2279] | yes |
+| 10 | ring trained − random | −0.0932 | [−0.1280, −0.0564] | yes |
+| 10 | ring trained − ESN | −0.0382 | [−0.0737, −0.0003] | yes |
+| 10 | distance-pair − ring trained | −0.4533 | [−0.4908, −0.4156] | yes |
+| 10 | sweep − ring trained | −0.4511 | [−0.4888, −0.4141] | yes |
+| 12 | ring trained − random | −0.1594 | [−0.1948, −0.1241] | yes |
+| 12 | ring trained − ESN | −0.1014 | [−0.1359, −0.0657] | yes |
+| 12 | distance-pair − ring trained | −0.4629 | [−0.4999, −0.4269] | yes |
+| 12 | sweep − ring trained | −0.7038 | [−0.7399, −0.6681] | yes |
+
+**Findings:**
+
+- No quantum advantage was found. At 6 qubits the trained reservoir is significantly worse than random assignment, and at 8 qubits it is statistically indistinguishable from random assignment and from the matched ESN. Every distance-based classical baseline is significantly better at both sizes.
+- At 10 and 12 qubits the reservoir does learn something: it beats random assignment and the matched ESN with CIs excluding zero. It still loses to sweep by 0.45 and 0.70, and to distance-pair by 0.45 and 0.46, all with CIs excluding zero. At 10 qubits the best classical baselines (sweep, distance-pair, k-means) are statistically tied with each other and clearly ahead of the reservoir.
+- The best cost at every size with five seeds comes from a simple classical method, not from the reservoir. The reservoir's edge over the ESN at 10 and 12 qubits is therefore not evidence of a useful quantum feature map; it is a small improvement inside a group that is already far behind classical routing heuristics.
+- The N=16 seed-0 result points the same way, but is provisional because only one seed exists.
+
+### Readout-only controls
+
+These controls reuse the same cached reservoir features and the same training targets. Only the readout inputs change, so they isolate whether the quantum feature content helps.
+
+| Size | quantum (ZZ) | quantum (no ZZ) | ESN pair products | distance-pair | distance + `D_ij` |
+|---:|---:|---:|---:|---:|---:|
+| 8 | 5.6447 | 5.6375 | 5.6211 | 5.2874 | **5.1088** |
+| 12 | 6.9866 | 7.0315 | 7.0667 | 6.5098 | **5.8614** |
+
+Removing all ZZ features does not hurt at 8 qubits and costs only 0.045 at 12 qubits, so the entangling features are not carrying the result. Adding explicit customer-to-customer distances to the distance-pair control gives the best cost at both sizes, well ahead of every reservoir variant. The angle-scale validation selected `1/sqrt(8)` at N=8 and `1.0` at N=12; the selected-scale test costs (5.648 and 6.987) are within noise of the default, so angle tuning does not change the conclusion. Per-seed controls are in `results/pairwise_diagnostics/`.
+
+### Decoder ceiling
+
+To separate readout error from decoder error, OR-Tools routes were converted to vehicle labels and decoded again with the same `nn2opt` decoder. The mean re-decoded gap is 0.013% at N=8 and 0.009% at N=12 (maximum 3.2% and 0.9%). OR-Tools uses three non-empty routes on 31/250 N=8 cases and 7/250 N=12 cases; the decoder already handles fewer than four routes when the labels contain fewer. Index ordering instead of `nn2opt` costs 3.1% at N=8 and 14.5% at N=12, which is why `nn2opt` is used for every method. The decoder is therefore not the source of the learned-method gap; the co-assignment predictions are.
+
+### Decision rule
+
+A quantum advantage would be reported only if the paired 95% CI of (quantum − best classical baseline) excluded zero on at least 50 test instances, at least 5 seeds, and at least 3 sizes. No comparison in this benchmark meets that rule. Negative and inconclusive results are reported as such.
+
 ## Classical Reservoir Ablation
+
+> **Superseded for label-free comparisons.** The ablation below uses the legacy flat/node readout with coordinate-dependent route-centroid labels. It is retained for provenance only; use the fair label-free benchmark above. The pairwise target and readout change is in commit `f0e402c1`.
 
 Before attributing any result to "quantum" advantage, we tested whether the quantum reservoir provides any benefit over a classical Echo State Network (ESN) of matched feature dimension, using the same decoder and identical synthetic VRP instances (`scripts/benchmark_classical_reservoir.py`). This is not a claim of quantum advantage — it isolates whether the quantum feature map is doing anything a classical random projection can't.
 
@@ -131,6 +194,8 @@ Before attributing any result to "quantum" advantage, we tested whether the quan
 Raw JSON outputs for all five runs are available via `scripts/benchmark_classical_reservoir.py --qubits {4,8,12,16,20} --instances 20 --vehicles 4`.
 
 ### Ansatz comparison at small scale (4 qubits)
+
+> **Superseded for label-free comparisons.** This table also uses the legacy flat readout and coordinate-dependent route-centroid labels; it is retained for provenance only. See the fair label-free benchmark above.
 
 The ring-topology results above use a specific entangling pattern (global CZ ring, 2 layers). We tested whether a shallower, purely local-entanglement ansatz (1 RX layer + nearest-neighbor-only CZ, no ring closure — see `build_shallow_local_reservoir()` in `modules/reservoir_trainer.py`) changes the picture, across 5 seeds at 4 qubits:
 

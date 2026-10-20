@@ -19,7 +19,9 @@ from scripts.benchmark_fair import bootstrap_ci  # noqa: E402
 
 DEFAULT_SOURCES = {
     4: "results/pairwise_4_12",
+    6: "results/pairwise_6_10",
     8: "results/pairwise_8_16",
+    10: "results/pairwise_6_10",
     12: "results/pairwise_4_12",
     16: "results/pairwise_8_16",
 }
@@ -38,6 +40,8 @@ COMPARISONS = (
     ("quantum_ring_trained", "classical_esn"),
     ("quantum_shallow_trained", "classical_esn"),
     ("quantum_ring_trained", "quantum_ring_random"),
+    ("sweep_assignment", "quantum_ring_trained"),
+    ("kmeans_distance", "quantum_ring_trained"),
 )
 
 
