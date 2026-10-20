@@ -47,3 +47,6 @@ data/
 
 # Rebuildable benchmark feature cache (archived in results/feature_cache.tar.gz)
 results/feature_cache/
+
+# Duplicate N=10 run kept locally for variance checking
+results/pairwise_10/

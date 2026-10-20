@@ -23,7 +23,7 @@ DEFAULT_SOURCES = {
     8: "results/pairwise_8_16",
     10: "results/pairwise_6_10",
     12: "results/pairwise_4_12",
-    16: "results/pairwise_8_16",
+    16: "results/pairwise_16",
 }
 
 COMPARISONS = (
@@ -296,7 +296,7 @@ def main() -> None:
         "duplicate check.",
         "Seeds available per size: "
         + ", ".join(f"N={size}: {count}" for size, count in seed_counts.items())
-        + ". N=16 is provisional until seeds 1-4 are run.",
+        + ". N=16 is a secondary size and is not used for any advantage claim.",
         "Locations/gaps are relative to the OR-Tools 1 s reference.",
     ]
     write_markdown(

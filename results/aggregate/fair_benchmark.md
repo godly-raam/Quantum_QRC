@@ -2,7 +2,7 @@
 
 N=4 is degenerate (three customers, four vehicles) and is excluded from any claim.
 N=8 uses the full-method-set run; the gate run is retained as a duplicate check.
-Seeds available per size: N=4: 5, N=6: 5, N=8: 5, N=10: 5, N=12: 5, N=16: 1. N=16 is provisional until seeds 1-4 are run.
+Seeds available per size: N=4: 5, N=6: 5, N=8: 5, N=10: 5, N=12: 5, N=16: 5. N=16 is a secondary size and is not used for any advantage claim.
 Locations/gaps are relative to the OR-Tools 1 s reference.
 
 ## Summary
@@ -49,14 +49,14 @@ Locations/gaps are relative to the OR-Tools 1 s reference.
 | 12 | quantum_shallow_trained | 5 | 1250 | 6.9910 | 33.17% | 33.525 |
 | 12 | random_assignment | 5 | 1250 | 7.1301 | 35.90% | 0.282 |
 | 12 | sweep_assignment | 5 | 1250 | 6.2668 | 19.03% | 0.273 |
-| 16 | classical_esn | 1 | 250 | 8.1284 | 43.63% | 18.982 |
-| 16 | distance_pair | 1 | 250 | 7.3985 | 30.47% | 18.760 |
-| 16 | kmeans_distance | 1 | 250 | 7.2706 | 28.36% | 12.858 |
-| 16 | quantum_ring_random | 1 | 250 | 7.9646 | 40.73% | 529.601 |
-| 16 | quantum_ring_trained | 1 | 250 | 7.9596 | 40.58% | 536.395 |
-| 16 | quantum_shallow_trained | 1 | 250 | 8.0066 | 41.43% | 497.663 |
-| 16 | random_assignment | 1 | 250 | 8.2218 | 45.43% | 0.418 |
-| 16 | sweep_assignment | 1 | 250 | 6.7291 | 18.34% | 0.383 |
+| 16 | classical_esn | 5 | 1250 | 8.0992 | 43.33% | 19.133 |
+| 16 | distance_pair | 5 | 1250 | 7.3992 | 30.60% | 18.724 |
+| 16 | kmeans_distance | 5 | 1250 | 7.2325 | 27.81% | 12.619 |
+| 16 | quantum_ring_random | 5 | 1250 | 7.9709 | 40.96% | 318.352 |
+| 16 | quantum_ring_trained | 5 | 1250 | 7.9232 | 40.15% | 318.978 |
+| 16 | quantum_shallow_trained | 5 | 1250 | 7.9337 | 40.31% | 288.030 |
+| 16 | random_assignment | 5 | 1250 | 8.2222 | 45.62% | 0.401 |
+| 16 | sweep_assignment | 5 | 1250 | 6.7580 | 19.12% | 0.378 |
 
 ## Paired differences (bootstrap 95% CI)
 
@@ -137,21 +137,21 @@ Locations/gaps are relative to the OR-Tools 1 s reference.
 | 12 | quantum_ring_trained - quantum_ring_random | -0.0281 | [-0.0653, 0.0057] | no | 1250 |
 | 12 | sweep_assignment - quantum_ring_trained | -0.7038 | [-0.7408, -0.6660] | yes | 1250 |
 | 12 | kmeans_distance - quantum_ring_trained | -0.5311 | [-0.5707, -0.4896] | yes | 1250 |
-| 16 | distance_pair - random_assignment | -0.8233 | [-0.9139, -0.7335] | yes | 250 |
-| 16 | distance_pair - sweep_assignment | 0.6693 | [0.5740, 0.7694] | yes | 250 |
-| 16 | distance_pair - kmeans_distance | 0.1279 | [0.0389, 0.2167] | yes | 250 |
-| 16 | kmeans_distance - random_assignment | -0.9512 | [-1.0403, -0.8585] | yes | 250 |
-| 16 | sweep_assignment - random_assignment | -1.4926 | [-1.5880, -1.3970] | yes | 250 |
-| 16 | classical_esn - distance_pair | 0.7300 | [0.6434, 0.8158] | yes | 250 |
-| 16 | quantum_ring_trained - distance_pair | 0.5611 | [0.4722, 0.6469] | yes | 250 |
-| 16 | quantum_shallow_trained - distance_pair | 0.6081 | [0.5261, 0.6959] | yes | 250 |
-| 16 | quantum_ring_random - random_assignment | -0.2571 | [-0.3450, -0.1696] | yes | 250 |
-| 16 | quantum_ring_trained - random_assignment | -0.2622 | [-0.3459, -0.1790] | yes | 250 |
-| 16 | quantum_ring_trained - classical_esn | -0.1689 | [-0.2422, -0.0945] | yes | 250 |
-| 16 | quantum_shallow_trained - classical_esn | -0.1219 | [-0.1984, -0.0405] | yes | 250 |
-| 16 | quantum_ring_trained - quantum_ring_random | -0.0051 | [-0.0804, 0.0751] | no | 250 |
-| 16 | sweep_assignment - quantum_ring_trained | -1.2304 | [-1.3236, -1.1420] | yes | 250 |
-| 16 | kmeans_distance - quantum_ring_trained | -0.6889 | [-0.7786, -0.5974] | yes | 250 |
+| 16 | distance_pair - random_assignment | -0.8231 | [-0.8633, -0.7838] | yes | 1250 |
+| 16 | distance_pair - sweep_assignment | 0.6411 | [0.5983, 0.6822] | yes | 1250 |
+| 16 | distance_pair - kmeans_distance | 0.1667 | [0.1259, 0.2078] | yes | 1250 |
+| 16 | kmeans_distance - random_assignment | -0.9897 | [-1.0310, -0.9471] | yes | 1250 |
+| 16 | sweep_assignment - random_assignment | -1.4642 | [-1.5041, -1.4247] | yes | 1250 |
+| 16 | classical_esn - distance_pair | 0.7000 | [0.6615, 0.7406] | yes | 1250 |
+| 16 | quantum_ring_trained - distance_pair | 0.5240 | [0.4874, 0.5621] | yes | 1250 |
+| 16 | quantum_shallow_trained - distance_pair | 0.5346 | [0.4979, 0.5725] | yes | 1250 |
+| 16 | quantum_ring_random - random_assignment | -0.2513 | [-0.2899, -0.2157] | yes | 1250 |
+| 16 | quantum_ring_trained - random_assignment | -0.2990 | [-0.3352, -0.2608] | yes | 1250 |
+| 16 | quantum_ring_trained - classical_esn | -0.1760 | [-0.2115, -0.1389] | yes | 1250 |
+| 16 | quantum_shallow_trained - classical_esn | -0.1655 | [-0.2023, -0.1298] | yes | 1250 |
+| 16 | quantum_ring_trained - quantum_ring_random | -0.0477 | [-0.0833, -0.0126] | yes | 1250 |
+| 16 | sweep_assignment - quantum_ring_trained | -1.1651 | [-1.2068, -1.1248] | yes | 1250 |
+| 16 | kmeans_distance - quantum_ring_trained | -0.6907 | [-0.7335, -0.6505] | yes | 1250 |
 
 ## Decoder diagnostic (nn2opt vs index ordering)
 
@@ -197,11 +197,11 @@ Locations/gaps are relative to the OR-Tools 1 s reference.
 | 12 | quantum_shallow_trained | 6.9910 | 7.7428 | 9.43% |
 | 12 | random_assignment | 7.1301 | 7.8070 | 8.34% |
 | 12 | sweep_assignment | 6.2668 | 6.7817 | 7.28% |
-| 16 | classical_esn | 8.1284 | 9.9602 | 18.08% |
-| 16 | distance_pair | 7.3985 | 9.0368 | 17.84% |
-| 16 | kmeans_distance | 7.2706 | 8.6960 | 15.94% |
-| 16 | quantum_ring_random | 7.9646 | 9.9131 | 19.39% |
-| 16 | quantum_ring_trained | 7.9596 | 9.9887 | 20.01% |
-| 16 | quantum_shallow_trained | 8.0066 | 9.9389 | 19.05% |
-| 16 | random_assignment | 8.2218 | 9.9464 | 17.06% |
-| 16 | sweep_assignment | 6.7291 | 7.9658 | 15.14% |
+| 16 | classical_esn | 8.0992 | 9.9606 | 18.34% |
+| 16 | distance_pair | 7.3992 | 9.0792 | 18.16% |
+| 16 | kmeans_distance | 7.2325 | 8.6806 | 16.26% |
+| 16 | quantum_ring_random | 7.9709 | 9.8958 | 19.11% |
+| 16 | quantum_ring_trained | 7.9232 | 9.9102 | 19.71% |
+| 16 | quantum_shallow_trained | 7.9337 | 9.9184 | 19.62% |
+| 16 | random_assignment | 8.2222 | 9.9656 | 17.10% |
+| 16 | sweep_assignment | 6.7580 | 8.0270 | 15.35% |

@@ -122,9 +122,9 @@ Design: synthetic capacitated VRP instances with `n_locations == n_qubits`, four
 | 8 | 5 | 5.6240 | 5.3744 | 5.3596 | **5.2883** | 5.6545 | 5.6454 | 5.6330 | 5.6155 |
 | 10 | 5 | 6.4711 | 5.9269 | 5.9421 | **5.9246** | 6.4161 | 6.3807 | 6.3779 | 6.3929 |
 | 12 | 5 | 7.1301 | **6.2668** | 6.4395 | 6.5077 | 7.0720 | 6.9987 | 6.9706 | 6.9910 |
-| 16 (provisional) | 1 | 8.2218 | **6.7291** | 7.2706 | 7.3985 | 8.1284 | 7.9646 | 7.9596 | 8.0066 |
+| 16 | 5 | 8.2222 | **6.7580** | 7.2325 | 7.3992 | 8.0992 | 7.9709 | 7.9232 | 7.9337 |
 
-Mean route cost, lower is better. N=16 has only seed 0 and is not used for any claim.
+Mean route cost, lower is better. All sizes shown have five seeds. N=16 is a secondary size because its simulation is much slower, and it is not used for any advantage claim.
 
 Key paired differences (quantum and best classical methods):
 
@@ -143,13 +143,17 @@ Key paired differences (quantum and best classical methods):
 | 12 | ring trained − ESN | −0.1014 | [−0.1359, −0.0657] | yes |
 | 12 | distance-pair − ring trained | −0.4629 | [−0.4999, −0.4269] | yes |
 | 12 | sweep − ring trained | −0.7038 | [−0.7399, −0.6681] | yes |
+| 16 | ring trained − random | −0.2990 | [−0.3352, −0.2608] | yes |
+| 16 | ring trained − ESN | −0.1760 | [−0.2115, −0.1389] | yes |
+| 16 | distance-pair − ring trained | −0.5240 | [−0.5621, −0.4874] | yes |
+| 16 | sweep − ring trained | −1.1651 | [−1.2068, −1.1248] | yes |
 
 **Findings:**
 
 - No quantum advantage was found. At 6 qubits the trained reservoir is significantly worse than random assignment, and at 8 qubits it is statistically indistinguishable from random assignment and from the matched ESN. Every distance-based classical baseline is significantly better at both sizes.
 - At 10 and 12 qubits the reservoir does learn something: it beats random assignment and the matched ESN with CIs excluding zero. It still loses to sweep by 0.45 and 0.70, and to distance-pair by 0.45 and 0.46, all with CIs excluding zero. At 10 qubits the best classical baselines (sweep, distance-pair, k-means) are statistically tied with each other and clearly ahead of the reservoir.
 - The best cost at every size with five seeds comes from a simple classical method, not from the reservoir. The reservoir's edge over the ESN at 10 and 12 qubits is therefore not evidence of a useful quantum feature map; it is a small improvement inside a group that is already far behind classical routing heuristics.
-- The N=16 seed-0 result points the same way, but is provisional because only one seed exists.
+- At 16 qubits the pattern repeats: the reservoir beats random assignment and the ESN, but loses to k-means by 0.69, distance-pair by 0.52, and sweep by 1.17, all with CIs excluding zero.
 
 ### Readout-only controls
 
