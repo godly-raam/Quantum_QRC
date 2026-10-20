@@ -44,5 +44,3 @@ build/
 data/
 
 
-# Generated feature cache
-results/feature_cache/
