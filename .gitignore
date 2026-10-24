@@ -50,3 +50,7 @@ results/feature_cache/
 
 # Duplicate N=10 run kept locally for variance checking
 results/pairwise_10/
+
+# Local validation and generated graph artifacts
+.venv-validation/
+graphify-out/

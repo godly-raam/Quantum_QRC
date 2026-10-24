@@ -186,6 +186,8 @@ The edge over random does **not** disappear at any requested shot count. At the 
 
 Against the matched ESN the picture is more fragile: N=10 is significant only at S=100,000 (−0.0364 [−0.0726, −0.0005]); N=12 becomes significant at S=10,000 and 100,000 (−0.0552 and −0.0618). At S≤3 the reservoir is worse than the matched ESN at N=10; from S=10 through S=1,000 the difference is not significant at either N=10 or N=12.
 
+The null-control comparison shows that the readout-plus-decoder pipeline itself accounts for part of the improvement over random assignment. At N=10, the information-free shuffled, Gaussian, and constant controls improve mean cost over random by 0.047–0.070; at N=12 they improve it by 0.071–0.097. The quantum features improve on those controls by a further 0.023–0.046 at N=10 and 0.068–0.095 at N=12. At N=8, comparisons against the null controls show no clear signal. In the shot-noise ablation, this additional quantum-feature signal is only statistically distinguishable from the matched ESN at high sampling levels: S=100,000 at N=10, and S=10,000 or more at N=12. Thus the measured edge is not simply attributable to quantum features, and the remaining feature-dependent component has a substantial sampling cost. Full paired comparisons are in `results/null_control/null_control.md` and the shot-count analysis in `results/shot_noise/`.
+
 The requested larger classical baselines, both using the same total feature count `3N + N(N-1)/2`, did not turn out to be stronger than the matched ESN at these sizes (all trained on the same target routes):
 
 | Size | matched ESN | large ESN (3 recurrent steps) | random Fourier features |
