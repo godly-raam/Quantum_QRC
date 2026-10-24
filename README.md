@@ -1,5 +1,13 @@
 # Q-Fleet: Quantum Reservoir VRP Backend
 
+**Five-line results summary**
+
+- N=8: no detectable reservoir signal over random assignment.
+- N=10: quantum features improve route cost by about 0.02–0.05 over decoder-matched nulls, but the comparison is marginal and not significant against the Gaussian null.
+- N=12: quantum features improve route cost by about 0.07–0.10 over decoder-matched nulls, with paired 95% CIs excluding zero.
+- The decoder pipeline alone beats random assignment by about 0.03–0.10; matched ESN features do not beat the nulls.
+- Reservoirs remain 0.45–1.17 behind the stronger classical heuristics at N=10–16; these circuits are exactly classically simulable through N=16, so no quantum-advantage claim is testable here.
+
 ## What this project actually shows
 
 This project investigates whether a fixed-parameter quantum reservoir provides a practical advantage over classical methods for vehicle routing problems (VRP) and related combinatorial optimization tasks. The results collected so far are mixed, and are reported here without adjustment:
@@ -7,7 +15,7 @@ This project investigates whether a fixed-parameter quantum reservoir provides a
 - On a QOBLIB VRP instance, the quantum-reservoir solver trades solution quality for adaptation speed (139% optimality gap vs. a classical baseline, but sub-second re-routing) — see the Benchmark Results section. QOBLIB's own authors note that current VRP instances in their library are solvable to classical optimality, so this result should be read as a latency benchmark, not a quantum-advantage claim.
 - On QOBLIB's Independent Set problem class (a class the benchmark's authors specifically flag as near-term quantum-amenable), we report a direct comparison against IBM's published QAOA baseline on the same instance — see the Independent Set Benchmark section.
 - A controlled ablation against a classical Echo State Network of matched size found the quantum reservoir performs worse on route cost at every size tested, and its expressivity collapses as qubit count grows — consistent with the barren plateau phenomenon — see the Classical Reservoir Ablation section.
-- In the label-free pairwise benchmark, no reservoir method beat a simple distance-based baseline. At 12 qubits the quantum reservoir beat the random assignment and the matched ESN, but remained far behind sweep, k-means, and distance-pair baselines — see the Fair Label-Free Pairwise Benchmark section.
+- In the label-free pairwise benchmark, decoder-matched null controls show a quantum-feature improvement at N=12 and a smaller, marginal improvement at N=10; neither changes the conclusion that reservoir methods remain far behind the strongest classical baselines — see the Fair Label-Free Pairwise Benchmark section.
 
 We have not yet found a result in which this architecture outperforms a matched classical baseline. We're documenting this openly because we think the negative results, and the process of catching and fixing the bugs that produced misleading earlier numbers, are as useful a record of the work as a positive result would have been. Real quantum-hardware execution (beyond classical simulation) is the next open step — see "Next Steps" below.
 
@@ -150,9 +158,9 @@ Key paired differences (quantum and best classical methods):
 
 **Findings:**
 
-- No quantum advantage was found. At 6 qubits the trained reservoir is significantly worse than random assignment, and at 8 qubits it is statistically indistinguishable from random assignment and from the matched ESN. Every distance-based classical baseline is significantly better at both sizes.
-- At 10 and 12 qubits the reservoir does learn something: it beats random assignment and the matched ESN with CIs excluding zero. It still loses to sweep by 0.45 and 0.70, and to distance-pair by 0.45 and 0.46, all with CIs excluding zero. At 10 qubits the best classical baselines (sweep, distance-pair, k-means) are statistically tied with each other and clearly ahead of the reservoir.
-- The best cost at every size with five seeds comes from a simple classical method, not from the reservoir. The reservoir's edge over the ESN at 10 and 12 qubits is therefore not evidence of a useful quantum feature map; it is a small improvement inside a group that is already far behind classical routing heuristics.
+- No quantum advantage was found. At 6 qubits, the trained reservoir is significantly worse than random assignment; k-means and distance-pair significantly beat it, while sweep is statistically indistinguishable from it. At 8 qubits, the reservoir is statistically indistinguishable from random assignment and the matched ESN, while the distance-based baselines beat it.
+- Relative to decoder-matched nulls (constant, shuffled and Gaussian features run through the same readout, clustering and capacity-repair decoder), the quantum features reduce route cost by 0.07–0.10 at N=12 (paired 95% CIs exclude 0) and 0.02–0.05 at N=10 (marginal; not significant vs the Gaussian null); there is no signal at N=8. The matched ESN's features do not beat any null. Random assignment is not a valid reference: the decoder alone, via capacity repair and tie breaking, beats it by 0.03–0.10. All reservoir variants remain 0.45–1.17 behind sweep, k-means and distance-pair at N=10–16. At N≤16 the circuits are exactly classically simulable, so no quantum-advantage claim is testable here.
+- The best cost at every size with five seeds comes from a simple classical method, not from the reservoir. The N=10 ring-trained versus matched-ESN comparison is borderline: its 95% CI only barely excludes zero. The null-control gains are small relative to the gap to classical routing heuristics.
 - At 16 qubits the pattern repeats: the reservoir beats random assignment and the ESN, but loses to k-means by 0.69, distance-pair by 0.52, and sweep by 1.17, all with CIs excluding zero.
 
 ### Readout-only controls
@@ -244,7 +252,6 @@ The ring-topology results above use a specific entangling pattern (global CZ rin
 - The shallow-local ansatz outperformed the classical ESN in 4 of 5 seeds at 4 qubits (worse in 1/5). The ring ansatz was worse than the classical ESN in all 5 seeds, by consistently larger margins.
 - This is the only regime found so far (across all ansätze and all qubit counts 4–20 tested) where a quantum-reservoir variant is competitive with or ahead of the classical baseline on route cost.
 - The advantage does not persist to larger sizes: shallow-local's expressivity collapses faster than ring's as qubit count grows (see table below), so whatever helps at 4 qubits does not scale.
-- **Methodological limitation**: `train_reservoir_offline()` currently fixes its own internal training RNG to a constant seed (42) regardless of the `--seed` flag used for the outer benchmark. The 5-seed sweep above varies the synthetic VRP instances, ESN initialization, and quantum sampling — but not the trained ansatz parameters themselves, which stay identical across all 5 runs. A fully independent confirmation would also vary the trainer seed. We report this result with that caveat rather than treating it as fully established; it is evidence the effect is not purely a one-off, not proof of a robust general advantage.
 
 | Qubits | Shallow-local expressivity | Ring expressivity | Classical ESN expressivity |
 |---|---|---|---|
