@@ -170,6 +170,32 @@ Removing all ZZ features does not hurt at 8 qubits and costs only 0.045 at 12 qu
 
 To separate readout error from decoder error, OR-Tools routes were converted to vehicle labels and decoded again with the same `nn2opt` decoder. The mean re-decoded gap is 0.013% at N=8 and 0.009% at N=12 (maximum 3.2% and 0.9%). OR-Tools uses three non-empty routes on 31/250 N=8 cases and 7/250 N=12 cases; the decoder already handles fewer than four routes when the labels contain fewer. Index ordering instead of `nn2opt` costs 3.1% at N=8 and 14.5% at N=12, which is why `nn2opt` is used for every method. The decoder is therefore not the source of the learned-method gap; the co-assignment predictions are.
 
+### Shot-noise ablation
+
+The cached 1.0-angle ring-reservoir features were resampled with binomial shot noise. For each Pauli expectation `o`, the estimate is `2 * Binomial(S, (1 + o) / 2) / S - 1`, with variance `(1 - o^2) / S`. Both training and test features are noised independently, the pair readout is retrained, and results are averaged over five noise repetitions per outer seed. Full details and all shot counts are in `results/shot_noise/`.
+
+Paired cost difference versus random assignment (negative is better than random):
+
+| Size | S=100 | S=1,000 | S=10,000 | S=100,000 |
+|---:|---|---|---|---|
+| 8 | +0.0219 [−0.0037, +0.0472] | +0.0131 [−0.0142, +0.0387] | +0.0141 [−0.0148, +0.0432] | +0.0132 [−0.0162, +0.0429] |
+| 10 | −0.0486 [−0.0783, −0.0205] | −0.0743 [−0.1054, −0.0440] | −0.0849 [−0.1193, −0.0511] | −0.0908 [−0.1259, −0.0547] |
+| 12 | −0.0749 [−0.1024, −0.0476] | −0.0815 [−0.1110, −0.0520] | −0.1211 [−0.1531, −0.0896] | −0.1276 [−0.1615, −0.0940] |
+
+The edge over random does **not** disappear at any requested shot count. At the low end, N=10 is not significant at S=1 (−0.0230 [−0.0491, +0.0047]) or S=3 (−0.0226 [−0.0485, +0.0059]), becomes significant at S=10, and stays significant through S=100,000. N=12 is already significant at S=1 (−0.0487 [−0.0760, −0.0212]). The edge therefore does not vanish monotonically: N=10 lacks significance only in the extreme 1–3 shot regime, and N=12 never vanishes in the tested range.
+
+Against the matched ESN the picture is more fragile: N=10 is significant only at S=100,000 (−0.0364 [−0.0726, −0.0005]); N=12 becomes significant at S=10,000 and 100,000 (−0.0552 and −0.0618). At S≤3 the reservoir is worse than the matched ESN at N=10; from S=10 through S=1,000 the difference is not significant at either N=10 or N=12.
+
+The requested larger classical baselines, both using the same total feature count `3N + N(N-1)/2`, did not turn out to be stronger than the matched ESN at these sizes (all trained on the same target routes):
+
+| Size | matched ESN | large ESN (3 recurrent steps) | random Fourier features |
+|---:|---:|---:|---:|
+| 8 | 5.6187 | 5.6198 | 5.6534 |
+| 10 | 6.4167 | 6.4091 | 6.4386 |
+| 12 | 7.0642 | 7.0757 | 7.0615 |
+
+All three are still far behind the sweep and distance baselines in the main table (for example, N=12 sweep is 6.2668). The shot-noise result therefore does not justify QPU time: the edge that survives is an edge over random assignment (and, at high shot counts, over these particular random-feature baselines), not over the best classical methods. The limiting factor is the feature/readout quality, not sampling noise.
+
 ### Decision rule
 
 A quantum advantage would be reported only if the paired 95% CI of (quantum − best classical baseline) excluded zero on at least 50 test instances, at least 5 seeds, and at least 3 sizes. No comparison in this benchmark meets that rule. Negative and inconclusive results are reported as such.
