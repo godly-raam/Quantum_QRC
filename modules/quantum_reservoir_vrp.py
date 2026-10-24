@@ -6,7 +6,6 @@ Quantum reservoir with random Hamiltonian provides exponential memory.
 Real-time adaptation to traffic jams and priority deliveries.
 No re-optimization needed - reservoir naturally adapts.
 
-Authors: Entangle Minds Team
 """
 
 from collections.abc import Callable
@@ -60,18 +59,18 @@ def validate_universal_regime(
 ) -> Dict[str, Any]:
     """
     Validate parameters follow the universal parameter regime from QuEra paper.
-    
+
     Universal Regime: Ω ≈ V ≈ λ ≈ (Δt)^(-1)
-    
+
     Reference: "Large-scale quantum reservoir learning with an analog quantum computer"
     QuEra Computing, arXiv:2407.02553v1
-    
+
     Args:
         coupling_strength: Hamiltonian coupling (J_ij in paper)
         evolution_time: Time step for reservoir evolution
         n_qubits: Number of reservoir qubits
         distance_scale: Characteristic scale of input data
-    
+
     Returns:
         Validation report with recommendations
     """
@@ -80,7 +79,7 @@ def validate_universal_regime(
     interaction_scale = coupling_strength * n_qubits  # Average interaction
     encoding_scale = coupling_strength * distance_scale  # Encoding strength
     probing_scale = 1.0 / evolution_time
-    
+
     # Calculate ratios (should all be ~1 in universal regime)
     ratios = {
         'interaction/mixing': interaction_scale / mixing_scale,
@@ -88,23 +87,23 @@ def validate_universal_regime(
         'probing/mixing': probing_scale / mixing_scale,
         'interaction/encoding': interaction_scale / encoding_scale
     }
-    
+
     # Check if in universal regime (within factor of 2-5)
     in_regime = all(0.2 < ratio < 5.0 for ratio in ratios.values())
-    
+
     recommendations = []
-    
+
     if not in_regime:
         if ratios['interaction/mixing'] < 0.2:
             recommendations.append("Increase coupling_strength (interactions too weak)")
         elif ratios['interaction/mixing'] > 5.0:
             recommendations.append("Decrease coupling_strength (interactions too strong)")
-        
+
         if ratios['probing/mixing'] < 0.2:
             recommendations.append("Decrease evolution_time (probing too slow)")
         elif ratios['probing/mixing'] > 5.0:
             recommendations.append("Increase evolution_time (probing too fast)")
-    
+
     return {
         'in_universal_regime': in_regime,
         'energy_scale_ratios': ratios,
@@ -116,16 +115,16 @@ def validate_universal_regime(
 class EmbeddingConsistencyTracker:
     """
     Track embedding consistency across batches.
-    
+
     Based on QuEra paper Section II.D: "Experimental consistency"
     Helps detect hardware drift and calibration issues.
     """
-    
+
     def __init__(self, batch_size: int = 50):
         self.batch_size = batch_size
         self.correlations: List[float] = []
         self.batch_indices: List[int] = []
-    
+
     def compute_batch_correlation(
         self,
         embeddings_actual: np.ndarray,
@@ -134,15 +133,15 @@ class EmbeddingConsistencyTracker:
     ) -> float:
         """
         Compute statistical correlation between actual and reference embeddings.
-        
+
         High correlation (>0.9) = good hardware consistency
         Low correlation (<0.7) = potential hardware issues
-        
+
         Args:
             embeddings_actual: Measured embeddings (from hardware/simulation)
             embeddings_reference: Reference embeddings (from exact simulation)
             batch_idx: Batch index for tracking
-        
+
         Returns:
             Pearson correlation coefficient
         """
@@ -151,44 +150,44 @@ class EmbeddingConsistencyTracker:
             embeddings_actual = embeddings_actual.flatten()
         if embeddings_reference.ndim > 1:
             embeddings_reference = embeddings_reference.flatten()
-        
+
         # Compute correlation
         res = pearsonr(embeddings_actual, embeddings_reference)
         corr = float(res[0])  # type: ignore
-        
+
         self.correlations.append(corr)
         self.batch_indices.append(batch_idx)
-        
+
         return corr
-    
+
     def detect_outliers(self, threshold: float = 0.05) -> List[int]:
         """
         Detect batches with anomalously low correlation.
-        
+
         These may indicate hardware miscalibration.
         """
         if len(self.correlations) < 3:
             return []
-        
+
         correlations = np.array(self.correlations)
         mean_corr = np.mean(correlations)
         std_corr = np.std(correlations)
-        
+
         outliers = []
         for idx, corr in enumerate(correlations):
             z_score = abs(corr - mean_corr) / (std_corr + 1e-10)
             if z_score > 2.0 or corr < (mean_corr - threshold):
                 outliers.append(self.batch_indices[idx])
-        
+
         return outliers
-    
+
     def get_consistency_report(self) -> Dict[str, Any]:
         """Generate consistency report."""
         if not self.correlations:
             return {"status": "no_data"}
-        
+
         correlations = np.array(self.correlations)
-        
+
         return {
             "mean_correlation": float(np.mean(correlations)),
             "std_correlation": float(np.std(correlations)),
@@ -204,15 +203,15 @@ class EmbeddingConsistencyTracker:
 class QuantumReservoir:
     """
     Quantum reservoir computing engine for VRP.
-    
+
     Key Innovation: The reservoir is a many-body quantum system with
     random interactions. It naturally encodes complex spatiotemporal
     patterns through quantum entanglement.
-    
+
     No training of the reservoir itself - only the classical readout layer.
     This exploits quantum resources without requiring quantum optimization.
     """
-    
+
     def __init__(
         self,
         n_reservoir_qubits: int = 10,
@@ -227,7 +226,7 @@ class QuantumReservoir:
     ):
         """
         Initialize quantum reservoir.
-        
+
         Args:
             n_reservoir_qubits: Size of quantum reservoir (10-15 practical)
             coupling_strength: Interaction strength in Hamiltonian
@@ -245,7 +244,7 @@ class QuantumReservoir:
         self.reservoir_builder = reservoir_builder
         self.angle_scale = angle_scale
         self.use_depot_diagonal = use_depot_diagonal
-        
+
         # FIX: Remove global np.random.seed(random_seed)
         self.rng = np.random.default_rng(random_seed)
         self.scalarization_rng = (
@@ -253,30 +252,30 @@ class QuantumReservoir:
             if scalarization_seed is not None
             else np.random.default_rng()
         )
-        
+
         # Current quantum state
         self.current_state = self._initialize_state()
-        
+
         # Memory of past states (for time-series processing - unused in digital mode, kept for compatibility)
         self.state_history: List[np.ndarray] = []
-        
+
         logger.info(f"🌌 Quantum Reservoir initialized: {n_reservoir_qubits} qubits, "
                    f"Hilbert space dimension: {self.dim}")
-        
+
         # Validate universal parameter regime
         validation = validate_universal_regime(
             coupling_strength=self.coupling,
             evolution_time=0.1,  # Default evolution time
             n_qubits=n_reservoir_qubits
         )
-        
+
         if not validation['in_universal_regime']:
             logger.warning("Parameters outside universal regime!")
             for rec in validation['recommendations']:
                 logger.warning(f"  → {rec}")
         else:
             logger.info("✓ Parameters in universal regime (QuEra validated)")
-    
+
 
     def _single_qubit_operator(self, qubit_idx, h_x, h_y, h_z):
         """Create single-qubit operator σ_x, σ_y, σ_z at position qubit_idx."""
@@ -285,7 +284,7 @@ class QuantumReservoir:
         pauli_y = np.array([[0, -1j], [1j, 0]], dtype=complex)
         pauli_z = np.array([[1, 0], [0, -1]], dtype=complex)
         identity = np.eye(2, dtype=complex)
-        
+
         # Build full Hilbert space operator
         op = 1.0
         for i in range(self.n_qubits):
@@ -293,30 +292,30 @@ class QuantumReservoir:
                 op = np.kron(op, h_x * pauli_x + h_y * pauli_y + h_z * pauli_z)
             else:
                 op = np.kron(op, identity)
-        
+
         return op
-    
+
     def _two_qubit_operator(self, qubit_i, qubit_j):
         """Create two-qubit ZZ interaction."""
         pauli_z = np.array([[1, 0], [0, -1]], dtype=complex)
         identity = np.eye(2, dtype=complex)
-        
+
         op = 1.0
         for idx in range(self.n_qubits):
             if idx == qubit_i or idx == qubit_j:
                 op = np.kron(op, pauli_z)
             else:
                 op = np.kron(op, identity)
-        
+
         return op
-    
+
     def _initialize_state(self) -> np.ndarray:
         """Initialize reservoir in random quantum state."""
         # FIX: Use isolated rng
         state = self.rng.standard_normal(self.dim) + 1j * self.rng.standard_normal(self.dim)
         state /= np.linalg.norm(state)
         return state
-    
+
     def encode_traffic_to_circuit(
         self,
         Q_fuel: np.ndarray,
@@ -339,7 +338,7 @@ class QuantumReservoir:
                 weights=scalarization_weights,
                 rng=self.scalarization_rng,
             )
-        
+
         # Pad to match reservoir qubits if necessary
         n_locations = Q_combined.shape[0]
         if n_locations < self.n_qubits:
@@ -348,14 +347,14 @@ class QuantumReservoir:
             Q_combined = padded_Q
         elif n_locations > self.n_qubits:
             Q_combined = Q_combined[:self.n_qubits, :self.n_qubits]
-            
+
         return build_qrc_feature_map(
             Q_combined,
             self.n_qubits,
             angle_scale=self.angle_scale,
             use_depot_diagonal=self.use_depot_diagonal,
         )
-        
+
     def build_reservoir_dynamics(self) -> QuantumCircuit:
         """
         Phase 3: Builds the reservoir and LOCKS the pre-trained parameters into it.
@@ -365,7 +364,7 @@ class QuantumReservoir:
 
         circuit_builder = self.reservoir_builder or build_parameterized_reservoir
         parameterized_qc = circuit_builder(self.n_qubits, self.reservoir_layers)
-        
+
         # Bind the offline-trained parameters to lock the circuit
         if self.trained_params is not None:
             locked_qc = parameterized_qc.assign_parameters(self.trained_params)
@@ -373,7 +372,7 @@ class QuantumReservoir:
         else:
             logger.warning("No trained_params provided! Returning unbound parameterized circuit.")
             return parameterized_qc
-        
+
     def build_full_architecture(
         self,
         Q_fuel: np.ndarray,
@@ -429,30 +428,30 @@ class QuantumReservoir:
         else:
             sampled_theta = float(lcu_theta)
         qc_constraint = build_lcu_constraint_layer(self.n_qubits, sampled_theta)
-        
+
         # 3. Reservoir Dynamics
         qc_reservoir = self.build_reservoir_dynamics()
-        
+
         # 4. Final Composition
         full_circuit = qc_input.copy()
         full_circuit.compose(qc_constraint, inplace=True)
         full_circuit.compose(qc_reservoir, inplace=True)
         return full_circuit
 
-    
+
     def measure_observables(self, state: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Measure Pauli observables from quantum state efficiently without dense matrix kron.
         """
         from qiskit.quantum_info import Statevector, SparsePauliOp
         import numpy as np
-        
+
         if state is None:
             state = self.current_state
-            
+
         sv = Statevector(state)
         observables = []
-        
+
         # Measure all single-qubit Pauli expectations
         for qubit_idx in range(self.n_qubits):
             for p_str in ['X', 'Y', 'Z']:
@@ -462,7 +461,7 @@ class QuantumReservoir:
                 op = SparsePauliOp("".join(pauli_list))
                 expectation = np.real(sv.expectation_value(op))
                 observables.append(expectation)
-        
+
         # Add some two-qubit correlations
         for i in range(min(3, self.n_qubits - 1)):
             pauli_list = ['I'] * self.n_qubits
@@ -471,68 +470,68 @@ class QuantumReservoir:
             op_zz = SparsePauliOp("".join(pauli_list))
             correlation = np.real(sv.expectation_value(op_zz))
             observables.append(correlation)
-        
+
         return np.array(observables)
-    
+
     def get_reservoir_features(self) -> np.ndarray:
         """
         Extract feature vector from reservoir state history.
-        
+
         Combines:
         - Current state observables
         - Time-averaged observables
         - Variance of observables
-        
+
         This captures both instantaneous and temporal information.
-        
+
         CRITICAL: Always returns FIXED-SIZE feature vector!
         """
         current_obs = self.measure_observables()
-        
+
         # FIXED SIZE: Always use the same number of historical states
         HISTORY_WINDOW = 5
-        
+
         if len(self.state_history) >= HISTORY_WINDOW:
             # Use last 5 states
             historical_obs = [self.measure_observables(s) for s in self.state_history[-HISTORY_WINDOW:]]
             mean_obs = np.mean(historical_obs, axis=0)
             std_obs = np.std(historical_obs, axis=0)
-            
+
             features = np.concatenate([current_obs, mean_obs, std_obs])
-        
+
         elif len(self.state_history) > 0:
             # Pad with zeros if not enough history
             historical_obs = [self.measure_observables(s) for s in self.state_history]
-            
+
             # Pad to HISTORY_WINDOW states
             while len(historical_obs) < HISTORY_WINDOW:
                 historical_obs.append(np.zeros_like(current_obs))
-            
+
             mean_obs = np.mean(historical_obs, axis=0)
             std_obs = np.std(historical_obs, axis=0)
-            
+
             features = np.concatenate([current_obs, mean_obs, std_obs])
-        
+
         else:
             # No history yet - pad with zeros
             mean_obs = np.zeros_like(current_obs)
             std_obs = np.zeros_like(current_obs)
-            
+
             features = np.concatenate([current_obs, mean_obs, std_obs])
-        
+
         return features
 
 
 class ReservoirVRPSolver:
     """
     Complete VRP solver using Quantum Reservoir Computing.
-    
+
     Workflow:
     1. Train on historical traffic patterns + optimal routes
     2. Real-time: Feed current traffic → Reservoir evolves → Predict routes
     3. Adaptation: Traffic jam → Update reservoir → New routes (< 1 second)
     """
-    
+
     def __init__(
         self,
         n_reservoir_qubits: int = 10,
@@ -572,32 +571,32 @@ class ReservoirVRPSolver:
         scalarization_rng = (
             np.random.default_rng(seed) if seed is not None else None
         )
-        
+
         qpu_time = 0.0
         pareto_front = []
-        
+
         active_locations = sum(1 for i in range(Q_fuel.shape[0]) if np.any(Q_fuel[i, :]) or np.any(Q_fuel[:, i]))
         if active_locations == 0:
             active_locations = Q_fuel.shape[0]
-            
+
         n_locations = Q_fuel.shape[0] # Local variable
         n_vehicles = 4 # Local variable
-        
+
         logger.info(f"Running multi-objective loop for {iterations} iterations...")
-        
+
         for i in range(iterations):
             start_qpu = time.time()
-            
+
             # Phase 1: Scalarize exactly once, then encode the combined matrix.
             Q_combined, weights = generate_scalarized_cost_matrix(
                 Q_fuel, Q_time, rng=scalarization_rng
             )
-            
+
             # Build and execute the locked architecture
             qc_full = self.reservoir.build_architecture_from_scalar(
                 Q_combined, n_vehicles
             )
-            
+
             if self.reservoir.n_qubits > 20:
                 # OOM prevention: Mocking the feature vector for 27-qubits as classical statevector sim is too expensive
                 features = self.reservoir.rng.random(self.reservoir.n_qubits * 3) * 2 - 1
@@ -605,10 +604,10 @@ class ReservoirVRPSolver:
                 encoded_state = Statevector.from_instruction(qc_full).data
                 self.reservoir.current_state = encoded_state / np.linalg.norm(encoded_state)
                 features = self.reservoir.measure_observables()
-            
+
             end_qpu = time.time()
             qpu_time += (end_qpu - start_qpu)
-            
+
             # Direct mapping from quantum features to route encoding (MO-QAOA feed-forward)
             if self.readout is not None and not self.legacy_decoder:
                 from modules.readout import readout_assignment
@@ -638,7 +637,7 @@ class ReservoirVRPSolver:
                     distance_matrix=Q_fuel,
                     ordering=self.ordering if self.legacy_decoder else "index",
                 )
-            
+
             # Calculate Fuel and Time costs
             fuel_cost = 0.0
             time_cost = 0.0
@@ -646,9 +645,9 @@ class ReservoirVRPSolver:
                 for idx in range(len(route) - 1):
                     fuel_cost += Q_fuel[route[idx], route[idx+1]]
                     time_cost += Q_time[route[idx], route[idx+1]]
-                    
+
             pareto_front.append((fuel_cost, time_cost))
-            
+
         # Filter non-dominated
         non_dominated = []
         for p in pareto_front:
@@ -659,10 +658,10 @@ class ReservoirVRPSolver:
                     break
             if not dominated:
                 non_dominated.append(p)
-                
+
         # Remove duplicates
         non_dominated = list(set(non_dominated))
-        
+
         return non_dominated, qpu_time
 
     def _decode_assignment(
@@ -830,18 +829,18 @@ class ReservoirVRPSolver:
     ) -> List[List[int]]:
         """
         Decode flat vector back to routes with Repair Logic (Winner-Takes-All).
-        
+
         Ensures:
         1. All valid locations are visited exactly once (no skips).
         2. No duplicate visits.
         3. No "phantom" locations (if problem size < training size).
         """
         matrix = encoding.reshape(n_vehicles, n_locations)
-        
+
         num_valid_locs = active_locations if active_locations is not None else n_locations
-        
+
         vehicle_stops: Dict[int, List[int]] = {v: [] for v in range(n_vehicles)}
-        
+
         # 4. Repair Step:
         # Iterate strictly through VALID customer locations (1 to N)
         # We skip 0 (Depot) and any padding locations.
@@ -849,23 +848,23 @@ class ReservoirVRPSolver:
             # Find the vehicle with the HIGHEST affinity for this location
             # This guarantees the location is assigned to exactly one vehicle.
             best_vehicle = int(np.argmax(matrix[:, loc]))
-            
+
             # Assign location to that vehicle
             vehicle_stops[best_vehicle].append(loc)
-            
+
         # 5. Construct final routes
         routes = self._order_vehicle_stops(
             vehicle_stops, n_vehicles, distance_matrix, ordering
         )
-        
-        # 6. Safety Fallback: If absolutely no routes were valid (rare), 
+
+        # 6. Safety Fallback: If absolutely no routes were valid (rare),
         # assign all jobs to Vehicle 0 to prevent crashes.
         if not routes and num_valid_locs > 1:
             all_locs = list(range(1, num_valid_locs))
             routes.append([0] + all_locs + [0])
-            
+
         return routes
-    
+
     def solve_realtime(
         self,
         distance_matrix: np.ndarray,
@@ -874,34 +873,34 @@ class ReservoirVRPSolver:
     ) -> AdaptiveRoute:
         """
         Solve VRP in real-time using trained reservoir.
-        
+
         NO optimization needed - just forward pass through reservoir!
-        
+
         Args:
             distance_matrix: Base distances
             traffic_multipliers: Current traffic (1.0 = normal, 2.0+ = jam)
             num_vehicles: Fleet size
-        
+
         Returns:
             AdaptiveRoute with solution
         """
         start_time = time.time()
-        
+
         Q_fuel = distance_matrix
         Q_time = distance_matrix * traffic_multipliers
-        
+
         # Phase 2: Sample LCU branches and average
         num_branches = self.reservoir.n_qubits + 1
         branch_features = []
-        
+
         for b in range(num_branches):
             qc_full = self.reservoir.build_full_architecture(Q_fuel, Q_time, num_vehicles)
             encoded_state = Statevector.from_instruction(qc_full).data
             self.reservoir.current_state = encoded_state / np.linalg.norm(encoded_state)
             branch_features.append(self.reservoir.measure_observables())
-            
+
         features = np.mean(branch_features, axis=0)
-        
+
         # FIX: Do not mutate self. Use local variables.
         n_locations = distance_matrix.shape[0]
         if self.readout is not None and not self.legacy_decoder:
@@ -933,18 +932,18 @@ class ReservoirVRPSolver:
                 distance_matrix=distance_matrix,
                 ordering=self.ordering if self.legacy_decoder else "index",
             )
-        
+
         # Calculate total distance (with traffic)
         adjusted_matrix = distance_matrix * traffic_multipliers
         total_distance = 0.0
         for route in routes:
             for i in range(len(route) - 1):
                 total_distance += adjusted_matrix[route[i], route[i+1]]
-        
+
         adaptation_time = time.time() - start_time
-        
+
         logger.info(f"⚡ Real-time solve: {adaptation_time:.3f}s, distance: {total_distance:.2f}")
-        
+
         return AdaptiveRoute(
             routes=routes,
             total_distance=total_distance,
@@ -953,7 +952,7 @@ class ReservoirVRPSolver:
             confidence=0.85,
             notes=f"Real-time adaptation in {adaptation_time:.3f}s"
         )
-    
+
     def adapt_to_traffic_jam(
         self,
         current_routes: List[List[int]],
@@ -963,38 +962,38 @@ class ReservoirVRPSolver:
     ) -> AdaptiveRoute:
         """
         REAL-TIME ADAPTATION: Traffic jam detected!
-        
+
         Update traffic multipliers and get new routes in milliseconds.
-        
+
         Args:
             current_routes: Current fleet routes
             distance_matrix: Base distances
             jam_location_pairs: List of (from, to) experiencing traffic
             jam_severity: Multiplier for jammed routes (2.5 = 150% longer)
-        
+
         Returns:
             New adaptive routes
         """
         logger.warning(f"🚨 TRAFFIC JAM DETECTED: {len(jam_location_pairs)} affected routes!")
-        
+
         # Create traffic multiplier matrix
         traffic_multipliers = np.ones_like(distance_matrix)
-        
+
         for (i, j) in jam_location_pairs:
             traffic_multipliers[i, j] = jam_severity
             traffic_multipliers[j, i] = jam_severity
-        
+
         # Solve with new traffic conditions (INSTANT)
         new_solution = self.solve_realtime(
             distance_matrix,
             traffic_multipliers,
             len(current_routes)
         )
-        
+
         new_solution.notes += f" | Traffic jam adaptation: {len(jam_location_pairs)} jammed routes"
-        
+
         return new_solution
-    
+
     def adapt_to_priority_delivery(
         self,
         current_routes: List[List[int]],
@@ -1004,39 +1003,39 @@ class ReservoirVRPSolver:
     ) -> AdaptiveRoute:
         """
         REAL-TIME ADAPTATION: Urgent delivery added!
-        
+
         This is the SECOND KILLER DEMO feature. Add a new high-priority
         stop and instantly reroute the fleet.
-        
+
         Args:
             current_routes: Current fleet routes
             distance_matrix: Base distances (must include priority_location)
             priority_location: New urgent delivery location
             traffic_multipliers: Current traffic conditions
-        
+
         Returns:
             New routes including priority delivery
         """
         logger.warning(f"🚨 PRIORITY DELIVERY: Location {priority_location} needs immediate service!")
-        
+
         if traffic_multipliers is None:
             traffic_multipliers = np.ones_like(distance_matrix)
-        
+
         # Boost priority by reducing "cost" to visit it
         # (In practice, you'd modify the QUBO/objective)
         priority_traffic = traffic_multipliers.copy()
         priority_traffic[:, priority_location] *= 0.5  # Make it "closer"
         priority_traffic[priority_location, :] *= 0.5
-        
+
         # Solve with priority embedded
         new_solution = self.solve_realtime(
             distance_matrix,
             priority_traffic,
             len(current_routes)
         )
-        
+
         new_solution.notes += f" | Priority delivery at location {priority_location}"
-        
+
         return new_solution
 
 
@@ -1058,15 +1057,15 @@ def generate_synthetic_training_data(
         parse_vrp_instance = None
 
     logger.info(f"Generating {n_instances} training instances...")
-    
+
     training_data = []
     rng = np.random.default_rng(seed)
-    
+
     data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'QOBLIB', '09-routing', 'instances')
     vrp_files = []
     if os.path.exists(data_dir):
         vrp_files = glob.glob(os.path.join(data_dir, '*.vrp'))
-    
+
     for i in range(n_instances):
         if vrp_files and has_parser and parse_vrp_instance is not None:
             # Use a real instance
@@ -1088,49 +1087,49 @@ def generate_synthetic_training_data(
             # Random VRP instance
             n_locs = rng.integers(5, 8)
             n_vehs = rng.integers(2, 4)
-            
+
             coords = rng.standard_normal((n_locs, 2)) * 0.1 + [16.5, 80.5]
             dist_matrix = np.zeros((n_locs, n_locs))
-            
+
             for ii in range(n_locs):
                 for jj in range(ii + 1, n_locs):
                     d = np.linalg.norm(coords[ii] - coords[jj])
                     dist_matrix[ii, jj] = dist_matrix[jj, ii] = d
-            
+
             # Random traffic conditions
             traffic_mult = rng.uniform(1.0, 2.0, (n_locs, n_locs))
             np.fill_diagonal(traffic_mult, 1.0)
-        
+
         # Generate "optimal" routes (greedy for training)
         routes = []
         unvisited = set(range(1, n_locs))
-        
+
         for v in range(n_vehs):
             route = [0]
             current = 0
-            
+
             while unvisited and len(route) < (n_locs // n_vehs + 2):
                 nearest = min(unvisited, key=lambda x: dist_matrix[current, x] * traffic_mult[current, x])
                 route.append(nearest)
                 unvisited.remove(nearest)
                 current = nearest
-            
+
             route.append(0)
             routes.append(route)
-        
+
         # Calculate distance
         total_dist = 0
         for route in routes:
             for ii in range(len(route) - 1):
                 total_dist += dist_matrix[route[ii], route[ii+1]] * traffic_mult[route[ii], route[ii+1]]
-        
+
         training_data.append({
             'distance_matrix': dist_matrix,
             'traffic_multipliers': traffic_mult,
             'optimal_routes': routes,
             'total_distance': total_dist
         })
-    
+
     logger.info(f"✓ Generated {n_instances} training instances")
     return training_data
 
@@ -1140,7 +1139,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("QUANTUM RESERVOIR COMPUTING FOR VRP - COMPLETE SYSTEM")
     print("=" * 80)
-    
+
     # Load offline trained weights if available
     n_qubits = 8
     trained_params = None
@@ -1148,41 +1147,41 @@ if __name__ == "__main__":
     if os.path.exists(weights_path):
         trained_params = np.load(weights_path, allow_pickle=False)
         print(f"Loaded Phase 3 locked parameters from {weights_path}")
-        
+
     # Create reservoir solver
     qrc_solver = ReservoirVRPSolver(n_reservoir_qubits=n_qubits, trained_params=trained_params)
-    
+
     # Generate test data
     print("\n[1/3] Generating synthetic test data...")
     test_data = generate_synthetic_training_data(n_instances=1)
     test_instance = test_data[0]
-    
+
     print("\n[2/3] Testing real-time solving...")
-    
+
     solution = qrc_solver.solve_realtime(
         test_instance['distance_matrix'],
         test_instance['traffic_multipliers'],
         num_vehicles=2
     )
-    
+
     print(f"✓ Real-time solution: {solution.total_distance:.2f} km in {solution.adaptation_time:.3f}s")
     print(f"  Routes: {solution.routes}")
-    
+
     # DEMO: Traffic jam adaptation
     print("\n[3/3] DEMO: Real-time traffic jam adaptation...")
     print("  Simulating traffic jam on routes (1,2) and (2,3)...")
-    
+
     jammed_solution = qrc_solver.adapt_to_traffic_jam(
         solution.routes,
         test_instance['distance_matrix'],
         jam_location_pairs=[(1, 2), (2, 3)],
         jam_severity=2.5
     )
-    
+
     print(f"✓ Adapted in {jammed_solution.adaptation_time:.3f}s!")
     print(f"  New distance: {jammed_solution.total_distance:.2f} km")
     print(f"  New routes: {jammed_solution.routes}")
-    
+
     print("\n" + "=" * 80)
     print("🏆 QUANTUM RESERVOIR COMPUTING: COMPLETE SUCCESS!")
     print("=" * 80)
