@@ -727,6 +727,10 @@ def evaluate_method(
     readout = None
 
     if method in FEATURE_METHODS or method == "distance_pair":
+        if train_instances is None:
+            raise ValueError(
+                f"train_instances are required to fit the {method} readout"
+            )
         train_features, _ = _method_features(
             method,
             solver,

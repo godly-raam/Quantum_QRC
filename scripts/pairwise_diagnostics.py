@@ -35,7 +35,6 @@ from scripts.benchmark_fair import (  # noqa: E402
     _decode,
     _lcu_theta,
     _quantum_theta_hash,
-    bootstrap_ci,
     make_split,
     quantum_features,
     route_cost,
@@ -82,7 +81,7 @@ def collect_quantum(
                 instance.seed,
                 angle_scale,
                 theta_hash,
-                lambda: quantum_features(
+                lambda instance=instance, theta=theta: quantum_features(
                     reservoir, instance.distances, n_vehicles, theta
                 ),
             )
@@ -102,7 +101,7 @@ def collect_esn(cache: FeatureCache, size: int, instances, benchmark_seed: int):
                 instance.seed,
                 0.0,
                 theta_hash,
-                lambda: esn.features(instance.distances),
+                lambda instance=instance: esn.features(instance.distances),
             )
         )
     cache.flush()
@@ -218,7 +217,7 @@ def main() -> None:
     scale_rows: list[dict] = []
     evaluation_rows: list[dict] = []
     control_rows: list[dict] = []
-    comparison_rows: list[dict] = []
+
     selections: dict[int, float] = {}
 
     for size in args.sizes:

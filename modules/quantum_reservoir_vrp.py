@@ -1018,12 +1018,13 @@ class ReservoirVRPSolver:
         """
         logger.warning(f"🚨 PRIORITY DELIVERY: Location {priority_location} needs immediate service!")
 
-        if traffic_multipliers is None:
-            traffic_multipliers = np.ones_like(distance_matrix)
-
         # Boost priority by reducing "cost" to visit it
         # (In practice, you'd modify the QUBO/objective)
-        priority_traffic = traffic_multipliers.copy()
+        priority_traffic = (
+            np.ones_like(distance_matrix)
+            if traffic_multipliers is None
+            else traffic_multipliers.copy()
+        )
         priority_traffic[:, priority_location] *= 0.5  # Make it "closer"
         priority_traffic[priority_location, :] *= 0.5
 

@@ -43,7 +43,6 @@ from scripts.benchmark_fair import (  # noqa: E402
     EchoStateNetwork,
     bootstrap_ci,
     make_split,
-    route_cost,
     solve_ortools,
 )
 from scripts.pairwise_diagnostics import (  # noqa: E402

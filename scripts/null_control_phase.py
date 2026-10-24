@@ -47,6 +47,12 @@ def paired_ci(differences: np.ndarray, seed: int) -> str:
     return f"{mean:+.4f} [{low:+.4f}, {high:+.4f}]"
 
 
+def selected_alpha(readout) -> float:
+    if readout.best_alpha is None:
+        raise RuntimeError("fitted readout did not select a ridge alpha")
+    return float(readout.best_alpha)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--size", type=int, required=True)
@@ -129,7 +135,7 @@ def main() -> None:
             scores = np.asarray(readout.predict(te)).reshape(-1)
             predicted_costs = _evaluate_rows(tr, te, targets, test, solver, benchmark_seed)[0]
             costs[name].extend(predicted_costs)
-            metrics[name]["lambda"].append(float(readout.best_alpha))
+            metrics[name]["lambda"].append(selected_alpha(readout))
             metrics[name]["output_var"].append(float(np.var(scores)))
             for i, instance in enumerate(test):
                 rows = te[i*n_pairs:(i+1)*n_pairs]
@@ -141,7 +147,7 @@ def main() -> None:
                 for i, instance in enumerate(test[:3]):
                     labels = predict_labels(readout, te[i*n_pairs:(i+1)*n_pairs], size, 4)
                     partition = [np.flatnonzero(labels == label).tolist() for label in np.unique(labels)]
-                    constant_partitions.append((instance.seed, partition, readout.best_alpha))
+                    constant_partitions.append((instance.seed, partition, selected_alpha(readout)))
 
         for shots, name in ((1, "S=1"), (100_000, "S=100000")):
             rep_costs, rep_routes, rep_spread, rep_lambdas, rep_vars = [], [], [], [], []
@@ -153,7 +159,7 @@ def main() -> None:
                 readout = fit_reader(tr, targets.reshape(-1), benchmark_seed)
                 scores = np.asarray(readout.predict(te)).reshape(-1)
                 rep_costs.append(_evaluate_rows(tr, te, targets, test, solver, benchmark_seed)[0])
-                rep_lambdas.append(float(readout.best_alpha))
+                rep_lambdas.append(selected_alpha(readout))
                 rep_vars.append(float(np.var(scores)))
                 rcount, spread = [], []
                 for i, instance in enumerate(test):
@@ -194,11 +200,11 @@ def main() -> None:
         ]
     lines += [f"## N={size}", "", "### D5: consistency check", "", "The unmodified-quantum null-control path and no-noise shot-noise path used the same `make_split` IDs, target JSON routes, pair targets, cached feature shard, readout, and `nn2opt` decoder. Per-instance costs were asserted equal within 1e-10.", "", "| Seed | Quantum no-noise | Quantum checkpoint | Random checkpoint | Δ quantum | Δ random |", "|---:|---:|---:|---:|---:|---:|"]
     for seed, got, ref, rand_ref in seed_lines:
-        lines.append(f"| {seed} | {got:.4f} | {ref:.4f} | {rand_ref:.4f} | {got-ref:+.4f} | {rand_ref-({10:6.4711,12:7.1301}[size]):+.4f} |")
+        lines.append(f"| {seed} | {got:.4f} | {ref:.4f} | {rand_ref:.4f} | {got-ref:+.4f} | {rand_ref-expected_random:+.4f} |")
     mean_q = np.mean([x[1] for x in seed_lines])
     mean_q_ref = np.mean([x[2] for x in seed_lines])
     mean_rand_ref = np.mean([x[3] for x in seed_lines])
-    lines += [f"", f"Mean quantum {mean_q:.4f}; checkpoint mean {mean_q_ref:.4f}; difference {mean_q-mean_q_ref:+.4f}. Random checkpoint mean {mean_rand_ref:.4f}; published fair benchmark reference { {10:6.4711,12:7.1301}[size]:.4f}.", "", "### D0/D2/D3/D4 and label-free D1", "", "D0 differences use one common 100-draw random-assignment expectation per test instance; D3 uses 100 uniform balanced partitions (four groups, sizes differ by at most one). CIs are paired bootstrap 95% intervals over 1,250 test instances. D1 entries report only the label-free structural metrics requested here. D4 lambda is the 5-fold CV ridge alpha; output variance is the variance of raw predicted pair scores on test pairs.", "", "| Variant | Mean cost | vs random (95% CI) | vs balanced (95% CI) | Mean non-empty routes | Mean cluster-size SD | CV λ (mode) | Test-score variance |", "|---|---:|---|---|---:|---:|---:|---:|"]
+    lines += ["", f"Mean quantum {mean_q:.4f}; checkpoint mean {mean_q_ref:.4f}; difference {mean_q-mean_q_ref:+.4f}. Random checkpoint mean {mean_rand_ref:.4f}; published fair benchmark reference {expected_random:.4f}.", "", "### D0/D2/D3/D4 and label-free D1", "", "D0 differences use one common 100-draw random-assignment expectation per test instance; D3 uses 100 uniform balanced partitions (four groups, sizes differ by at most one). CIs are paired bootstrap 95% intervals over 1,250 test instances. D1 entries report only the label-free structural metrics requested here. D4 lambda is the 5-fold CV ridge alpha; output variance is the variance of raw predicted pair scores on test pairs.", "", "| Variant | Mean cost | vs random (95% CI) | vs balanced (95% CI) | Mean non-empty routes | Mean cluster-size SD | CV λ (mode) | Test-score variance |", "|---|---:|---|---|---:|---:|---:|---:|"]
     for name in variants:
         values = np.asarray(costs[name])
         lines.append(f"| {name} | {np.mean(values):.4f} | {paired_ci(values-rand, size*10+1)} | {paired_ci(values-bal, size*10+2)} | {np.mean(metrics[name]['nonempty']):.3f} | {np.mean(metrics[name]['cluster_std']):.3f} | {Counter(metrics[name]['lambda']).most_common(1)[0][0]:g} | {np.mean(metrics[name]['output_var']):.6g} |")
